@@ -90,6 +90,7 @@ class Orchestrator:
 
         bot.is_active = True
         bot.port = port
+        bot.is_hibernated = False
 
         await self.session.commit()
 

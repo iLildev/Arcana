@@ -1,5 +1,20 @@
 import asyncio
+import socket
 from pathlib import Path
+
+
+async def wait_for_port(port: int, timeout: float = 5.0):
+    start = asyncio.get_event_loop().time()
+
+    while True:
+        try:
+            with socket.create_connection(("127.0.0.1", port), timeout=1):
+                return True
+        except OSError:
+            await asyncio.sleep(0.2)
+
+        if asyncio.get_event_loop().time() - start > timeout:
+            raise TimeoutError(f"Bot on port {port} did not start in time")
 
 
 class RuntimeManager:
@@ -29,6 +44,8 @@ class RuntimeManager:
         )
 
         self.processes[bot_id] = process
+
+        await wait_for_port(port)
 
     async def stop_bot(self, bot_id: str):
         process = self.processes.get(bot_id)

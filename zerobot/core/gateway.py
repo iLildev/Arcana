@@ -47,6 +47,9 @@ async def handle_update(bot_id: str, request: Request):
             # 🔥 إيقاظ البوت فعليًا
             await orchestrator.wake_bot(bot)
 
+            # تحديث الكائن بعد commit
+            await session.refresh(bot)
+
             # 🔥 تفريغ الرسائل بعد الاستيقاظ
             buffered_updates = await wake_buffer.flush(bot_id)
 
