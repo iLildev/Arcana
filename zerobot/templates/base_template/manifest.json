@@ -1,0 +1,8 @@
+{
+  "name": "base_template",
+  "version": "1.0.0",
+  "description": "Default ZeroBot starter template (aiogram 3 polling bot).",
+  "entrypoint": "main.py",
+  "requirements": ["aiogram==3.*"],
+  "env": ["BOT_TOKEN", "BOT_PORT"]
+}
