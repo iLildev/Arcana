@@ -81,3 +81,23 @@ class Orchestrator:
     async def reap_bot(self, bot_id: str):
         await self.runtime.stop_bot(bot_id)
         await self.ports.release_port(bot_id)
+
+    async def wake_bot(self, bot):
+        if bot.is_active:
+            return
+
+        port = await self.ports.reserve_port(bot.id)
+
+        bot.is_active = True
+        bot.port = port
+
+        await self.session.commit()
+
+        bot_path = self.venv.get_bot_path(bot.id)
+
+        await self.runtime.start_bot(
+            bot_id=bot.id,
+            bot_path=bot_path,
+            token=bot.token,
+            port=port,
+        )

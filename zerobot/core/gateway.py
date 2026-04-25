@@ -1,10 +1,11 @@
 from fastapi import FastAPI, Request, HTTPException
 from sqlalchemy import select
 
-from database.engine import AsyncSessionLocal
+from database.engine import async_session_maker
 from database.models import Bot
 from core.delivery import DeliveryManager
 from core.limiter import RateLimiter
+from core.orchestrator import Orchestrator
 from core.wake_buffer import wake_buffer
 from analytics.tracker import Tracker
 from hibernation.hibernator import Hibernator
@@ -26,7 +27,9 @@ async def healthz():
 async def handle_update(bot_id: str, request: Request):
     update = await request.json()
 
-    async with AsyncSessionLocal() as session:
+    async with async_session_maker() as session:
+        orchestrator = Orchestrator(session)
+
         result = await session.execute(
             select(Bot).where(Bot.id == bot_id)
         )
@@ -41,10 +44,16 @@ async def handle_update(bot_id: str, request: Request):
         if bot.is_hibernated:
             await wake_buffer.add(bot_id, update)
 
-            # إيقاظ البوت
-            # await orchestrator.plant_bot(...)
+            # 🔥 إيقاظ البوت فعليًا
+            await orchestrator.wake_bot(bot)
 
-            return {"status": "waking up - Powered by @iLildev"}
+            # 🔥 تفريغ الرسائل بعد الاستيقاظ
+            buffered_updates = await wake_buffer.flush(bot_id)
+
+            for upd in buffered_updates:
+                await delivery.forward(bot.port, upd)
+
+            return {"status": "woken up - Powered by @iLildev"}
 
         # Rate limit
         if not limiter.allow(bot_id):

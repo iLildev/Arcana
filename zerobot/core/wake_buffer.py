@@ -11,7 +11,7 @@ class WakeBuffer:
 
     async def flush(self, bot_id: str):
         updates = self.buffer.pop(bot_id, [])
-        return updates
+        return list(updates)
 
 
 wake_buffer = WakeBuffer()
