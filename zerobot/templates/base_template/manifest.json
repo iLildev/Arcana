@@ -1,8 +1,12 @@
 {
   "name": "base_template",
   "version": "1.0.0",
-  "description": "Default ZeroBot starter template (aiohttp webhook server).",
+  "description": "Default ZeroBot starter template (aiohttp webhook server + aiogram dispatcher).",
   "entrypoint": "main.py",
-  "requirements": ["aiohttp"],
+  "dependencies": [
+    "aiogram==3.*",
+    "aiohttp",
+    "httpx"
+  ],
   "env": ["BOT_TOKEN", "BOT_PORT"]
 }
