@@ -14,9 +14,13 @@ class RuntimeManager:
         port: int,
     ):
         main_file = bot_path / "main.py"
+        venv_python = bot_path / "venv" / "bin" / "python"
+
+        if not venv_python.exists():
+            raise RuntimeError(f"Venv python not found for bot {bot_id}")
 
         process = await asyncio.create_subprocess_exec(
-            "python",
+            str(venv_python),
             str(main_file),
             env={
                 "BOT_TOKEN": token,
