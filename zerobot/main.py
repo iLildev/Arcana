@@ -1,14 +1,29 @@
+"""Database bootstrap entry-point.
+
+Run once before starting the rest of the platform; it is safe to run on
+every boot. Responsibilities:
+
+1. Create any missing tables registered on ``Base.metadata``.
+2. Apply a small set of additive ``ALTER TABLE … ADD COLUMN IF NOT EXISTS``
+   migrations so that older deployments pick up new optional columns.
+3. Seed the port registry with the configured port range.
+4. Bootstrap the admin user when ``ADMIN_USER_ID`` is set.
+
+Usage::
+
+    python -m zerobot.main
+"""
+
 import asyncio
 
 from sqlalchemy import select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
-from config import settings
-from database.engine import engine, AsyncSessionLocal, Base
-import database.models  # noqa: F401  - register tables
-from database.models import User
-from database.port_registry import Port  # noqa: F401  - register ports table
-
+from zerobot import database  # noqa: F401  - register all ORM tables
+from zerobot.config import settings
+from zerobot.database.engine import AsyncSessionLocal, Base, engine
+from zerobot.database.models import User
+from zerobot.database.port_registry import Port
 
 # Idempotent additive column migrations. Safe to run on every boot:
 # PostgreSQL's `ADD COLUMN IF NOT EXISTS` is non-destructive and skips
@@ -21,18 +36,20 @@ ADDITIVE_MIGRATIONS = [
 ]
 
 
-async def init_db():
+async def init_db() -> None:
+    """Create any missing tables defined on ``Base.metadata``."""
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 
 
-async def apply_additive_migrations():
+async def apply_additive_migrations() -> None:
+    """Run the additive ALTER TABLE statements declared above."""
     async with engine.begin() as conn:
         for stmt in ADDITIVE_MIGRATIONS:
             await conn.execute(text(stmt))
 
 
-async def seed_ports():
+async def seed_ports() -> None:
     """Seed the ports table from PORT_RANGE_START..PORT_RANGE_END (idempotent)."""
     rows = [
         {"port_number": p, "bot_id": None, "status": "free", "last_used": None}
@@ -40,9 +57,7 @@ async def seed_ports():
     ]
 
     async with AsyncSessionLocal() as session:
-        stmt = pg_insert(Port).values(rows).on_conflict_do_nothing(
-            index_elements=["port_number"]
-        )
+        stmt = pg_insert(Port).values(rows).on_conflict_do_nothing(index_elements=["port_number"])
         await session.execute(stmt)
         await session.commit()
 
@@ -52,7 +67,7 @@ async def seed_ports():
     print(f"✅ Seeded ports: {total} total in registry")
 
 
-async def bootstrap_admin():
+async def bootstrap_admin() -> None:
     """If ADMIN_USER_ID is set, ensure that user exists and is flagged admin."""
     if not settings.ADMIN_USER_ID:
         print("ℹ️  ADMIN_USER_ID not set — skipping admin bootstrap")
@@ -72,7 +87,8 @@ async def bootstrap_admin():
             print(f"✅ Admin user already configured: {settings.ADMIN_USER_ID}")
 
 
-async def main():
+async def main() -> None:
+    """Run every bootstrap step in order."""
     await init_db()
     print("✅ Database initialized")
     await apply_additive_migrations()

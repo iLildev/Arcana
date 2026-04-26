@@ -1,20 +1,27 @@
+"""Privileged admin FastAPI service.
+
+Every ``/admin/*`` route is gated by the ``X-Admin-Token`` header and the
+matching ``settings.ADMIN_TOKEN`` value. ``/healthz`` is always public so
+that a process supervisor can probe the service without credentials.
+"""
+
+import contextlib
 import shutil
 from typing import Annotated
 
-from fastapi import FastAPI, Depends, HTTPException, Header, Query
+from fastapi import Depends, FastAPI, Header, HTTPException, Query
 from pydantic import BaseModel
-from sqlalchemy import select, func
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from config import settings
-from database.engine import async_session_maker
-from database.models import Bot, User, Wallet
-from database.port_registry import Port
-from database.wallet import WalletService
-from core.orchestrator import Orchestrator
-from isolation.venv_manager import VenvManager
-from events.publisher import fire
-
+from zerobot.config import settings
+from zerobot.core.orchestrator import Orchestrator
+from zerobot.database.engine import async_session_maker
+from zerobot.database.models import Bot, User, Wallet
+from zerobot.database.port_registry import Port
+from zerobot.database.wallet import WalletService
+from zerobot.events.publisher import fire
+from zerobot.isolation.venv_manager import VenvManager
 
 app = FastAPI(title="ZeroBot Admin Console")
 
@@ -23,13 +30,15 @@ app = FastAPI(title="ZeroBot Admin Console")
 
 
 async def get_session() -> AsyncSession:
+    """FastAPI dependency that yields one ``AsyncSession`` per request."""
     async with async_session_maker() as session:
         yield session
 
 
 async def require_admin(
     x_admin_token: Annotated[str | None, Header(alias="X-Admin-Token")] = None,
-):
+) -> bool:
+    """Reject the request unless the caller presents the configured admin token."""
     if not settings.ADMIN_TOKEN:
         raise HTTPException(
             status_code=503,
@@ -47,6 +56,8 @@ AdminGuard = Depends(require_admin)
 
 
 class BotOut(BaseModel):
+    """Public projection of a ``Bot`` row."""
+
     id: str
     user_id: str
     is_active: bool
@@ -59,6 +70,8 @@ class BotOut(BaseModel):
 
 
 class UserOut(BaseModel):
+    """Summary of a user (used by the user-list endpoint)."""
+
     id: str
     is_admin: bool
     bot_count: int
@@ -67,6 +80,8 @@ class UserOut(BaseModel):
 
 
 class UserDetailOut(BaseModel):
+    """Detailed user view with embedded bot list."""
+
     id: str
     is_admin: bool
     balance: int
@@ -75,11 +90,15 @@ class UserDetailOut(BaseModel):
 
 
 class WalletOut(BaseModel):
+    """Wallet snapshot for crystal-management responses."""
+
     user_id: str
     balance: int
 
 
 class StatsOut(BaseModel):
+    """Aggregate platform stats reported by ``GET /admin/stats``."""
+
     users_total: int
     bots_total: int
     bots_active: int
@@ -93,6 +112,8 @@ class StatsOut(BaseModel):
 
 
 class PortOut(BaseModel):
+    """One row from the port registry."""
+
     port_number: int
     bot_id: str | None
     status: str
@@ -100,10 +121,14 @@ class PortOut(BaseModel):
 
 
 class AmountIn(BaseModel):
+    """Request body for grant / deduct endpoints."""
+
     amount: int
 
 
 class CreateOfficialBotIn(BaseModel):
+    """Request body for ``POST /admin/official-bots``."""
+
     bot_id: str
     token: str
     name: str | None = None
@@ -111,12 +136,15 @@ class CreateOfficialBotIn(BaseModel):
 
 
 class PatchBotIn(BaseModel):
+    """Request body for ``PATCH /admin/bots/{bot_id}``."""
+
     name: str | None = None
     description: str | None = None
     is_official: bool | None = None
 
 
 def _bot_out(bot: Bot) -> BotOut:
+    """Project an ORM ``Bot`` into the public ``BotOut`` schema."""
     return BotOut(
         id=bot.id,
         user_id=bot.user_id,
@@ -134,7 +162,8 @@ def _bot_out(bot: Bot) -> BotOut:
 
 
 @app.get("/healthz")
-async def healthz():
+async def healthz() -> dict:
+    """Liveness probe (also reports whether admin auth is configured)."""
     return {"status": "ok", "admin_enabled": bool(settings.ADMIN_TOKEN)}
 
 
@@ -143,6 +172,8 @@ async def healthz():
 
 @app.get("/admin/stats", response_model=StatsOut, dependencies=[AdminGuard])
 async def system_stats(session: AsyncSession = Depends(get_session)):
+    """Return platform-wide counters (users, bots, ports, crystals)."""
+
     async def count(stmt):
         return (await session.execute(stmt)).scalar() or 0
 
@@ -155,7 +186,9 @@ async def system_stats(session: AsyncSession = Depends(get_session)):
         ports_total=await count(select(func.count(Port.port_number))),
         ports_used=await count(select(func.count(Port.port_number)).where(Port.status == "used")),
         ports_free=await count(select(func.count(Port.port_number)).where(Port.status == "free")),
-        ports_cooldown=await count(select(func.count(Port.port_number)).where(Port.status == "cooldown")),
+        ports_cooldown=await count(
+            select(func.count(Port.port_number)).where(Port.status == "cooldown")
+        ),
         crystals_in_circulation=await count(select(func.coalesce(func.sum(Wallet.balance), 0))),
     )
 
@@ -165,15 +198,14 @@ async def system_stats(session: AsyncSession = Depends(get_session)):
 
 @app.get("/admin/users", response_model=list[UserOut], dependencies=[AdminGuard])
 async def list_users(session: AsyncSession = Depends(get_session)):
+    """Return every user with their bot count and crystal balance."""
     users = (await session.execute(select(User).order_by(User.created_at))).scalars().all()
     out: list[UserOut] = []
     wallet_service = WalletService(session)
 
     for u in users:
         bot_count = (
-            await session.execute(
-                select(func.count(Bot.id)).where(Bot.user_id == u.id)
-            )
+            await session.execute(select(func.count(Bot.id)).where(Bot.user_id == u.id))
         ).scalar() or 0
         wallet = await wallet_service.get_wallet(u.id)
         out.append(
@@ -190,13 +222,12 @@ async def list_users(session: AsyncSession = Depends(get_session)):
 
 @app.get("/admin/users/{user_id}", response_model=UserDetailOut, dependencies=[AdminGuard])
 async def get_user(user_id: str, session: AsyncSession = Depends(get_session)):
+    """Detailed view of a single user, including every owned bot."""
     user = await session.get(User, user_id)
     if not user:
         raise HTTPException(404, "User not found")
 
-    bots = (
-        await session.execute(select(Bot).where(Bot.user_id == user_id))
-    ).scalars().all()
+    bots = (await session.execute(select(Bot).where(Bot.user_id == user_id))).scalars().all()
     wallet = await WalletService(session).get_wallet(user_id)
 
     return UserDetailOut(
@@ -208,10 +239,15 @@ async def get_user(user_id: str, session: AsyncSession = Depends(get_session)):
     )
 
 
-@app.post("/admin/users/{user_id}/wallet/grant", response_model=WalletOut, dependencies=[AdminGuard])
+@app.post(
+    "/admin/users/{user_id}/wallet/grant",
+    response_model=WalletOut,
+    dependencies=[AdminGuard],
+)
 async def grant_crystals(
     user_id: str, body: AmountIn, session: AsyncSession = Depends(get_session)
 ):
+    """Credit *amount* crystals to *user_id* (creates the user if missing)."""
     if body.amount <= 0:
         raise HTTPException(400, "amount must be positive")
 
@@ -230,10 +266,15 @@ async def grant_crystals(
     return WalletOut(user_id=user_id, balance=wallet.balance)
 
 
-@app.post("/admin/users/{user_id}/wallet/deduct", response_model=WalletOut, dependencies=[AdminGuard])
+@app.post(
+    "/admin/users/{user_id}/wallet/deduct",
+    response_model=WalletOut,
+    dependencies=[AdminGuard],
+)
 async def deduct_crystals(
     user_id: str, body: AmountIn, session: AsyncSession = Depends(get_session)
 ):
+    """Charge *amount* crystals from an existing user."""
     if body.amount <= 0:
         raise HTTPException(400, "amount must be positive")
 
@@ -245,7 +286,7 @@ async def deduct_crystals(
     try:
         await service.charge(user_id, body.amount)
     except RuntimeError as e:
-        raise HTTPException(400, str(e))
+        raise HTTPException(400, str(e)) from e
 
     wallet = await service.get_wallet(user_id)
     fire(
@@ -257,6 +298,7 @@ async def deduct_crystals(
 
 @app.post("/admin/users/{user_id}/promote", dependencies=[AdminGuard])
 async def promote_user(user_id: str, session: AsyncSession = Depends(get_session)):
+    """Flag *user_id* as a platform admin."""
     user = await session.get(User, user_id)
     if not user:
         raise HTTPException(404, "User not found")
@@ -267,6 +309,7 @@ async def promote_user(user_id: str, session: AsyncSession = Depends(get_session
 
 @app.post("/admin/users/{user_id}/demote", dependencies=[AdminGuard])
 async def demote_user(user_id: str, session: AsyncSession = Depends(get_session)):
+    """Remove the admin flag from *user_id*."""
     user = await session.get(User, user_id)
     if not user:
         raise HTTPException(404, "User not found")
@@ -277,22 +320,20 @@ async def demote_user(user_id: str, session: AsyncSession = Depends(get_session)
 
 @app.delete("/admin/users/{user_id}", dependencies=[AdminGuard])
 async def delete_user(user_id: str, session: AsyncSession = Depends(get_session)):
+    """Reap every bot owned by *user_id*, then delete the user + wallet rows."""
     user = await session.get(User, user_id)
     if not user:
         raise HTTPException(404, "User not found")
 
-    bots = (
-        await session.execute(select(Bot).where(Bot.user_id == user_id))
-    ).scalars().all()
+    bots = (await session.execute(select(Bot).where(Bot.user_id == user_id))).scalars().all()
 
     orchestrator = Orchestrator(session)
     venv = VenvManager()
 
     for b in bots:
-        try:
+        # Bot may already be dead; ignore reaping errors.
+        with contextlib.suppress(Exception):
             await orchestrator.reap_bot(b.id)
-        except Exception:
-            pass
         bot_path = venv.get_bot_path(b.id)
         if bot_path.exists():
             shutil.rmtree(bot_path, ignore_errors=True)
@@ -321,6 +362,7 @@ async def list_bots(
     user_id: str | None = Query(None),
     session: AsyncSession = Depends(get_session),
 ):
+    """List every bot, with optional state / ownership filters."""
     q = select(Bot)
     if is_active is not None:
         q = q.where(Bot.is_active.is_(is_active))
@@ -337,6 +379,7 @@ async def list_bots(
 
 @app.get("/admin/bots/{bot_id}", response_model=BotOut, dependencies=[AdminGuard])
 async def get_bot(bot_id: str, session: AsyncSession = Depends(get_session)):
+    """Return a single bot by id."""
     bot = await session.get(Bot, bot_id)
     if not bot:
         raise HTTPException(404, "Bot not found")
@@ -345,6 +388,7 @@ async def get_bot(bot_id: str, session: AsyncSession = Depends(get_session)):
 
 @app.post("/admin/bots/{bot_id}/wake", response_model=BotOut, dependencies=[AdminGuard])
 async def force_wake(bot_id: str, session: AsyncSession = Depends(get_session)):
+    """Force a hibernating bot to wake up immediately."""
     bot = await session.get(Bot, bot_id)
     if not bot:
         raise HTTPException(404, "Bot not found")
@@ -356,17 +400,20 @@ async def force_wake(bot_id: str, session: AsyncSession = Depends(get_session)):
     return _bot_out(bot)
 
 
-@app.post("/admin/bots/{bot_id}/hibernate", response_model=BotOut, dependencies=[AdminGuard])
+@app.post(
+    "/admin/bots/{bot_id}/hibernate",
+    response_model=BotOut,
+    dependencies=[AdminGuard],
+)
 async def force_hibernate(bot_id: str, session: AsyncSession = Depends(get_session)):
+    """Reap a running bot and mark it hibernated."""
     bot = await session.get(Bot, bot_id)
     if not bot:
         raise HTTPException(404, "Bot not found")
 
     orchestrator = Orchestrator(session)
-    try:
+    with contextlib.suppress(Exception):
         await orchestrator.reap_bot(bot.id)
-    except Exception:
-        pass
 
     bot.is_active = False
     bot.is_hibernated = True
@@ -378,16 +425,15 @@ async def force_hibernate(bot_id: str, session: AsyncSession = Depends(get_sessi
 
 @app.post("/admin/bots/{bot_id}/restart", response_model=BotOut, dependencies=[AdminGuard])
 async def restart_bot(bot_id: str, session: AsyncSession = Depends(get_session)):
+    """Reap and re-launch a bot in one step."""
     bot = await session.get(Bot, bot_id)
     if not bot:
         raise HTTPException(404, "Bot not found")
 
     orchestrator = Orchestrator(session)
 
-    try:
+    with contextlib.suppress(Exception):
         await orchestrator.reap_bot(bot.id)
-    except Exception:
-        pass
 
     bot.is_active = False
     bot.port = None
@@ -401,15 +447,14 @@ async def restart_bot(bot_id: str, session: AsyncSession = Depends(get_session))
 
 @app.delete("/admin/bots/{bot_id}", dependencies=[AdminGuard])
 async def delete_bot(bot_id: str, session: AsyncSession = Depends(get_session)):
+    """Reap a bot, wipe its venv, and remove the database row."""
     bot = await session.get(Bot, bot_id)
     if not bot:
         raise HTTPException(404, "Bot not found")
 
     orchestrator = Orchestrator(session)
-    try:
+    with contextlib.suppress(Exception):
         await orchestrator.reap_bot(bot.id)
-    except Exception:
-        pass
 
     bot_path = VenvManager().get_bot_path(bot.id)
     if bot_path.exists():
@@ -422,9 +467,8 @@ async def delete_bot(bot_id: str, session: AsyncSession = Depends(get_session)):
 
 
 @app.patch("/admin/bots/{bot_id}", response_model=BotOut, dependencies=[AdminGuard])
-async def patch_bot(
-    bot_id: str, body: PatchBotIn, session: AsyncSession = Depends(get_session)
-):
+async def patch_bot(bot_id: str, body: PatchBotIn, session: AsyncSession = Depends(get_session)):
+    """Update editable bot metadata (name / description / official flag)."""
     bot = await session.get(Bot, bot_id)
     if not bot:
         raise HTTPException(404, "Bot not found")
@@ -445,11 +489,16 @@ async def patch_bot(
 
 @app.get("/admin/official-bots", response_model=list[BotOut], dependencies=[AdminGuard])
 async def list_official_bots(session: AsyncSession = Depends(get_session)):
+    """Return every bot flagged ``is_official``."""
     bots = (
-        await session.execute(
-            select(Bot).where(Bot.is_official.is_(True)).order_by(Bot.created_at)
+        (
+            await session.execute(
+                select(Bot).where(Bot.is_official.is_(True)).order_by(Bot.created_at)
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     return [_bot_out(b) for b in bots]
 
 
@@ -462,6 +511,7 @@ async def list_official_bots(session: AsyncSession = Depends(get_session)):
 async def create_official_bot(
     body: CreateOfficialBotIn, session: AsyncSession = Depends(get_session)
 ):
+    """Plant a new bot owned by the platform admin (free of charge)."""
     if not settings.ADMIN_USER_ID:
         raise HTTPException(
             status_code=503,
@@ -495,12 +545,10 @@ async def create_official_bot(
             token=body.token,
         )
     except RuntimeError as e:
-        # roll back the pre-credit so the wallet balance is unchanged
-        try:
+        # Roll back the pre-credit so the wallet balance is unchanged.
+        with contextlib.suppress(Exception):
             await wallet_service.charge(user_id, 1)
-        except Exception:
-            pass
-        raise HTTPException(400, str(e))
+        raise HTTPException(400, str(e)) from e
 
     bot = await session.get(Bot, body.bot_id)
     bot.is_official = True
@@ -523,6 +571,7 @@ async def list_ports(
     status_filter: str | None = Query(None, alias="status"),
     session: AsyncSession = Depends(get_session),
 ):
+    """Inspect the port registry, optionally filtered by status."""
     q = select(Port).order_by(Port.port_number)
     if status_filter is not None:
         q = q.where(Port.status == status_filter)
@@ -540,9 +589,8 @@ async def list_ports(
 
 
 @app.post("/admin/ports/{port_number}/release", dependencies=[AdminGuard])
-async def force_release_port(
-    port_number: int, session: AsyncSession = Depends(get_session)
-):
+async def force_release_port(port_number: int, session: AsyncSession = Depends(get_session)):
+    """Manually mark a port back as ``free`` (recovery escape hatch)."""
     port = await session.get(Port, port_number)
     if not port:
         raise HTTPException(404, "Port not found")

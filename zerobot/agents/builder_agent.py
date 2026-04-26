@@ -1,28 +1,30 @@
 """The Builder Agent loop.
 
 Given a user message, the agent calls Claude with the registered tools,
-executes any tool calls Claude requests, feeds results back, and repeats
-until Claude stops requesting tools (``stop_reason == "end_turn"``) or the
-iteration cap is hit.
+executes any tool calls Claude requests, feeds the results back, and
+repeats until Claude stops requesting tools (``stop_reason == "end_turn"``)
+or the iteration cap is hit.
 
 A simple in-memory session store keeps conversation history per ``user_id``
 between calls so follow-up turns retain context. Persistence to PostgreSQL
-will be added in Phase B.
+will be added in a later phase.
 """
+
 from __future__ import annotations
 
-import asyncio
+import contextlib
 import logging
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from typing import Awaitable, Callable, Optional
 
-from .llm import DEFAULT_MAX_TOKENS, DEFAULT_MODEL, get_client
-from .sandbox import SandboxManager
-from .tools import TOOL_SCHEMAS, execute_tool
+from zerobot.agents.llm import DEFAULT_MAX_TOKENS, DEFAULT_MODEL, get_client
+from zerobot.agents.sandbox import SandboxManager
+from zerobot.agents.tools import TOOL_SCHEMAS, execute_tool
 
 log = logging.getLogger(__name__)
 
-MAX_ITERATIONS = 30  # safety cap on tool-use loops per user turn
+# Safety cap on tool-use loops per user turn.
+MAX_ITERATIONS = 30
 
 SYSTEM_PROMPT = """You are Builder Agent, an autonomous coding assistant running inside the ZeroBot platform.
 
@@ -41,10 +43,13 @@ Working style:
 """
 
 
-# ---- session memory --------------------------------------------------------
+# ── session memory ─────────────────────────────────────────────────────────
+
 
 @dataclass
 class Session:
+    """Per-user conversation state, kept in process memory."""
+
     user_id: str
     messages: list[dict] = field(default_factory=list)
     total_input_tokens: int = 0
@@ -52,24 +57,29 @@ class Session:
 
 
 class SessionStore:
-    """Process-local session store. Replace with DB-backed store in Phase B."""
+    """Process-local session store. Replace with a DB-backed store in Phase B."""
 
     def __init__(self) -> None:
         self._sessions: dict[str, Session] = {}
 
     def get(self, user_id: str) -> Session:
+        """Return (creating on first access) the session for *user_id*."""
         if user_id not in self._sessions:
             self._sessions[user_id] = Session(user_id=user_id)
         return self._sessions[user_id]
 
     def reset(self, user_id: str) -> None:
+        """Forget *user_id*'s session entirely."""
         self._sessions.pop(user_id, None)
 
 
-# ---- agent loop ------------------------------------------------------------
+# ── agent loop ─────────────────────────────────────────────────────────────
+
 
 @dataclass
 class TurnResult:
+    """Aggregate metrics + final assistant text returned by ``run_turn``."""
+
     reply: str
     iterations: int
     tool_calls: int
@@ -78,17 +88,22 @@ class TurnResult:
 
     @property
     def total_tokens(self) -> int:
+        """Sum of input and output tokens for the whole turn."""
         return self.input_tokens + self.output_tokens
 
 
+# A coroutine called by the agent with intermediate progress strings (text or
+# tool labels). The Telegram bot uses it to live-edit a placeholder reply.
 ProgressCallback = Callable[[str], Awaitable[None]]
 
 
 class BuilderAgent:
+    """High-level orchestration of one Claude turn + its tool calls."""
+
     def __init__(
         self,
-        sandbox: Optional[SandboxManager] = None,
-        sessions: Optional[SessionStore] = None,
+        sandbox: SandboxManager | None = None,
+        sessions: SessionStore | None = None,
         model: str = DEFAULT_MODEL,
         max_tokens: int = DEFAULT_MAX_TOKENS,
     ) -> None:
@@ -102,7 +117,7 @@ class BuilderAgent:
         self,
         user_id: str,
         user_message: str,
-        on_progress: Optional[ProgressCallback] = None,
+        on_progress: ProgressCallback | None = None,
     ) -> TurnResult:
         """Process a single user message and return the assistant's final reply."""
         session = self.sessions.get(user_id)
@@ -128,12 +143,14 @@ class BuilderAgent:
 
             # Always record the assistant turn (text + tool_use blocks) so the
             # next iteration can reference tool_use ids.
-            session.messages.append({
-                "role": "assistant",
-                "content": [_block_to_dict(b) for b in response.content],
-            })
+            session.messages.append(
+                {
+                    "role": "assistant",
+                    "content": [_block_to_dict(b) for b in response.content],
+                }
+            )
 
-            # Collect text + tool_use from this turn
+            # Collect text + tool_use blocks from this turn.
             tool_uses = [b for b in response.content if b.type == "tool_use"]
             text_blocks = [b.text for b in response.content if b.type == "text"]
             current_text = "\n".join(t for t in text_blocks if t).strip()
@@ -153,16 +170,16 @@ class BuilderAgent:
             for tu in tool_uses:
                 tool_calls += 1
                 if on_progress:
-                    try:
+                    with contextlib.suppress(Exception):
                         await on_progress(f"⚙️ {tu.name}({_brief(tu.input)})")
-                    except Exception:  # noqa: BLE001
-                        pass
                 output = await execute_tool(user_id, tu.name, dict(tu.input), self.sandbox)
-                results.append({
-                    "type": "tool_result",
-                    "tool_use_id": tu.id,
-                    "content": output,
-                })
+                results.append(
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": tu.id,
+                        "content": output,
+                    }
+                )
             session.messages.append({"role": "user", "content": results})
 
         session.total_input_tokens += input_tokens
@@ -180,15 +197,20 @@ class BuilderAgent:
         )
 
     def reset(self, user_id: str) -> None:
+        """Forget a user's history and wipe their workspace."""
         self.sessions.reset(user_id)
         self.sandbox.reset_workspace(user_id)
 
 
-# ---- helpers ---------------------------------------------------------------
+# ── helpers ────────────────────────────────────────────────────────────────
+
 
 def _block_to_dict(block) -> dict:
-    """Convert an Anthropic content block to the plain dict shape required
-    when echoing it back as part of the conversation history."""
+    """Convert an Anthropic content block into the plain dict shape required.
+
+    The Anthropic SDK returns rich objects for response blocks, but the
+    request format expects them echoed back as plain dicts.
+    """
     if block.type == "text":
         return {"type": "text", "text": block.text}
     if block.type == "tool_use":
@@ -198,14 +220,14 @@ def _block_to_dict(block) -> dict:
             "name": block.name,
             "input": dict(block.input),
         }
-    # Future-proof: pass through anything else as-is via model_dump if available.
+    # Future-proof: pass anything else through ``model_dump`` if available.
     if hasattr(block, "model_dump"):
         return block.model_dump()
     return {"type": block.type}
 
 
 def _brief(payload: dict, limit: int = 60) -> str:
-    """Compact one-line preview of tool inputs for progress messages."""
+    """Render a compact one-line preview of tool inputs for progress messages."""
     try:
         items = []
         for k, v in payload.items():

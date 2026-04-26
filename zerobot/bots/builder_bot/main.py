@@ -1,25 +1,28 @@
 """ZeroBot Builder Bot — autonomous coding agent over Telegram.
 
-Wraps ``agents.builder_agent.BuilderAgent`` in an aiogram polling bot.
-Each Telegram message becomes one agent turn; tool calls and intermediate
-text are streamed back by editing a placeholder reply in-place. After the
-turn completes, crystals are deducted from the user's wallet (the platform
-admin defined by ``ADMIN_USER_ID`` is exempt).
+Wraps :class:`zerobot.agents.builder_agent.BuilderAgent` in an aiogram
+polling bot. Each Telegram message becomes one agent turn; tool calls and
+intermediate text are streamed back by editing a placeholder reply
+in-place. After the turn completes, crystals are deducted from the user's
+wallet (the platform admin defined by ``ADMIN_USER_ID`` is exempt).
 
 Required env:
-    BUILDER_BOT_TOKEN          — Telegram bot token (from BotFather)
+    BUILDER_BOT_TOKEN          Telegram bot token (from BotFather)
 Optional env (with defaults):
-    ADMIN_USER_ID              — exempt from crystal billing (default "")
-    BUILDER_TOKENS_PER_CRYSTAL — billing rate (default 5000)
-    BUILDER_MIN_BALANCE        — refuse new turns below this (default 1)
-    BUILDER_MAX_REPLY_LEN      — split outbound messages above this (default 3800)
+    ADMIN_USER_ID              Exempt from crystal billing (default "")
+    BUILDER_TOKENS_PER_CRYSTAL Billing rate (default 5000)
+    BUILDER_MIN_BALANCE        Refuse new turns below this (default 1)
+    BUILDER_MAX_REPLY_LEN      Split outbound messages above this (default 3800)
 
-Run from the ``zerobot/`` directory:
-    python -m bots.builder_bot.main
+Run from the project root::
+
+    python -m zerobot.bots.builder_bot.main
 """
+
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import os
 import sys
@@ -31,10 +34,10 @@ from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command, CommandStart
 from aiogram.types import Message
 
-from agents.builder_agent import BuilderAgent
-from database.engine import AsyncSessionLocal
-from database.wallet import WalletService
-from events.publisher import fire
+from zerobot.agents.builder_agent import BuilderAgent
+from zerobot.database.engine import AsyncSessionLocal
+from zerobot.database.wallet import WalletService
+from zerobot.events.publisher import fire
 
 # ─────────────── Config ───────────────
 
@@ -67,12 +70,12 @@ _user_locks: dict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
 
 
 def tg_user_id(message: Message) -> str:
-    """Map Telegram user → ZeroBot user id."""
+    """Map a Telegram user id to the canonical ZeroBot user id."""
     return f"tg-{message.from_user.id}"
 
 
 def chunk_text(text: str, limit: int = MAX_REPLY_LEN) -> list[str]:
-    """Split a long reply on paragraph / line boundaries."""
+    """Split a long reply into chunks ≤ *limit* on paragraph / line boundaries."""
     if len(text) <= limit:
         return [text]
     chunks: list[str] = []
@@ -92,7 +95,9 @@ def chunk_text(text: str, limit: int = MAX_REPLY_LEN) -> list[str]:
 
 # ─────────────── Wallet helpers ───────────────
 
+
 async def get_balance(user_id: str) -> int:
+    """Fetch the current crystal balance for *user_id*."""
     async with AsyncSessionLocal() as session:
         wallet = await WalletService(session).get_wallet(user_id)
         return wallet.balance
@@ -110,13 +115,16 @@ async def charge(user_id: str, amount: int) -> int:
 
 
 def crystals_for(tokens: int) -> int:
+    """Convert raw tokens to crystals using ``TOKENS_PER_CRYSTAL`` (min 1)."""
     return max(1, tokens // TOKENS_PER_CRYSTAL)
 
 
 # ─────────────── Commands ───────────────
 
+
 @router.message(CommandStart())
 async def cmd_start(message: Message) -> None:
+    """Show the welcome screen with role, balance, and command list."""
     user_id = tg_user_id(message)
     is_admin = user_id == ADMIN_USER_ID
     balance = await get_balance(user_id)
@@ -140,6 +148,7 @@ async def cmd_start(message: Message) -> None:
 
 @router.message(Command("balance"))
 async def cmd_balance(message: Message) -> None:
+    """Reply with the user's current crystal balance."""
     user_id = tg_user_id(message)
     balance = await get_balance(user_id)
     await message.answer(f"💎 رصيدك: <b>{balance}</b> كرستالة", parse_mode="HTML")
@@ -147,6 +156,7 @@ async def cmd_balance(message: Message) -> None:
 
 @router.message(Command("reset"))
 async def cmd_reset(message: Message) -> None:
+    """Wipe the user's workspace and conversation history."""
     user_id = tg_user_id(message)
     agent.reset(user_id)
     await message.answer("🧹 تمّ مسح الذاكرة وتفريغ مساحة العمل.")
@@ -154,6 +164,7 @@ async def cmd_reset(message: Message) -> None:
 
 @router.message(Command("stats"))
 async def cmd_stats(message: Message) -> None:
+    """Show quick session stats (turns, tokens, equivalent crystals)."""
     user_id = tg_user_id(message)
     session = agent.sessions.get(user_id)
     turns = sum(1 for m in session.messages if m["role"] == "user")
@@ -168,21 +179,21 @@ async def cmd_stats(message: Message) -> None:
 
 # ─────────────── Main message handler ───────────────
 
+
 @router.message(F.text)
 async def on_message(message: Message) -> None:
+    """Run a single agent turn for the user's free-form text message."""
     user_id = tg_user_id(message)
     is_admin = user_id == ADMIN_USER_ID
 
-    # Pre-flight balance check (admins exempt)
+    # Pre-flight balance check (admins exempt).
     if not is_admin:
         balance = await get_balance(user_id)
         if balance < MIN_BALANCE:
-            await message.answer(
-                "🚫 لا يوجد رصيد كافٍ. اشحن محفظتك ثم أعد المحاولة."
-            )
+            await message.answer("🚫 لا يوجد رصيد كافٍ. اشحن محفظتك ثم أعد المحاولة.")
             return
 
-    # Per-user serialization to keep the agent's session consistent
+    # Per-user serialization to keep the agent's session consistent.
     async with _user_locks[user_id]:
         placeholder = await message.answer("🤖 يفكّر…")
         progress_state = {"last_edit": 0.0, "lines": []}
@@ -193,7 +204,7 @@ async def on_message(message: Message) -> None:
             if now - progress_state["last_edit"] < 1.5:
                 return
             preview_lines = progress_state["lines"][-6:]
-            preview = "\n".join(_truncate(l, 200) for l in preview_lines)
+            preview = "\n".join(_truncate(line_, 200) for line_ in preview_lines)
             preview = preview[: MAX_REPLY_LEN - 50]
             try:
                 await placeholder.edit_text(f"⏳\n{preview}")
@@ -211,7 +222,7 @@ async def on_message(message: Message) -> None:
                 await message.answer(f"❌ خطأ: {type(exc).__name__}: {exc}")
             return
 
-        # Billing
+        # Billing.
         crystal_cost = 0
         new_balance: int | None = None
         if not is_admin:
@@ -227,7 +238,7 @@ async def on_message(message: Message) -> None:
                 },
             )
 
-        # Replace placeholder with the final reply (chunked if long)
+        # Replace the placeholder with the final reply (chunked if long).
         chunks = chunk_text(result.reply)
         try:
             await placeholder.edit_text(chunks[0])
@@ -236,7 +247,7 @@ async def on_message(message: Message) -> None:
         for extra in chunks[1:]:
             await message.answer(extra)
 
-        # Footer with stats
+        # Footer with stats.
         footer_parts = [
             f"🔁 {result.iterations} iter",
             f"🛠 {result.tool_calls} tools",
@@ -250,22 +261,26 @@ async def on_message(message: Message) -> None:
 
 
 def _truncate(s: str, n: int) -> str:
+    """Shorten *s* to at most *n* chars and collapse newlines."""
     s = s.replace("\n", " ")
     return s if len(s) <= n else s[: n - 1] + "…"
 
 
 # ─────────────── Entrypoint ───────────────
 
+
 async def main() -> None:
+    """Start long-polling Telegram for messages."""
     dp = Dispatcher()
     dp.include_router(router)
-    log.info("Builder Bot starting (admin=%s, rate=%s tok/crystal)",
-             ADMIN_USER_ID or "none", TOKENS_PER_CRYSTAL)
+    log.info(
+        "Builder Bot starting (admin=%s, rate=%s tok/crystal)",
+        ADMIN_USER_ID or "none",
+        TOKENS_PER_CRYSTAL,
+    )
     await dp.start_polling(bot, handle_signals=False)
 
 
 if __name__ == "__main__":
-    try:
+    with contextlib.suppress(KeyboardInterrupt, SystemExit):
         asyncio.run(main())
-    except (KeyboardInterrupt, SystemExit):
-        pass

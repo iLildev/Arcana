@@ -3,15 +3,15 @@
 Each tool's input schema follows the Anthropic tool-use spec. The dispatcher
 returns a string that becomes the ``tool_result`` content block.
 """
+
 from __future__ import annotations
 
-import asyncio
 import json
 from typing import Any
 
 import httpx
 
-from .sandbox import SandboxError, SandboxManager
+from zerobot.agents.sandbox import SandboxError, SandboxManager
 
 WEB_FETCH_TIMEOUT = 15
 WEB_FETCH_MAX_BYTES = 64_000
@@ -139,6 +139,7 @@ async def execute_tool(
 
 
 async def _web_fetch(url: str) -> str:
+    """HTTP GET *url* and return up to ``WEB_FETCH_MAX_BYTES`` of its body."""
     if not url.startswith(("http://", "https://")):
         return "error: url must start with http:// or https://"
     async with httpx.AsyncClient(timeout=WEB_FETCH_TIMEOUT, follow_redirects=True) as client:

@@ -1,19 +1,27 @@
-from fastapi import FastAPI, Depends, HTTPException
+"""End-user FastAPI service: wallet top-ups and bot CRUD.
+
+Mounted at the public user-facing URL. No authentication is enforced at
+this layer — callers identify themselves via ``user_id`` path params and
+the service trusts the layer in front of it (e.g. the Telegram bot) to
+have authenticated the user.
+"""
+
+from fastapi import Depends, FastAPI, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from database.engine import async_session_maker
-from database.models import Bot, User
-from database.wallet import WalletService
-from core.orchestrator import Orchestrator
-from events.publisher import fire
-
+from zerobot.core.orchestrator import Orchestrator
+from zerobot.database.engine import async_session_maker
+from zerobot.database.models import Bot, User
+from zerobot.database.wallet import WalletService
+from zerobot.events.publisher import fire
 
 app = FastAPI(title="ZeroBot User Console")
 
 
 async def get_session() -> AsyncSession:
+    """FastAPI dependency that yields a single ``AsyncSession``."""
     async with async_session_maker() as session:
         yield session
 
@@ -22,6 +30,8 @@ async def get_session() -> AsyncSession:
 
 
 class BotOut(BaseModel):
+    """Public shape of a bot record returned by the API."""
+
     id: str
     user_id: str
     is_active: bool
@@ -30,20 +40,27 @@ class BotOut(BaseModel):
 
 
 class WalletOut(BaseModel):
+    """Public wallet shape."""
+
     user_id: str
     balance: int
 
 
 class CreateBotIn(BaseModel):
+    """Request body for ``POST /users/{user_id}/bots``."""
+
     bot_id: str
     token: str
 
 
 class TopupIn(BaseModel):
+    """Request body for wallet top-ups."""
+
     amount: int
 
 
 def _bot_out(bot: Bot) -> BotOut:
+    """Project an ORM ``Bot`` to the public ``BotOut`` schema."""
     return BotOut(
         id=bot.id,
         user_id=bot.user_id,
@@ -57,7 +74,8 @@ def _bot_out(bot: Bot) -> BotOut:
 
 
 @app.get("/healthz")
-async def healthz():
+async def healthz() -> dict[str, str]:
+    """Liveness probe."""
     return {"status": "ok"}
 
 
@@ -66,7 +84,7 @@ async def healthz():
 
 @app.get("/users/{user_id}/wallet", response_model=WalletOut)
 async def get_wallet(user_id: str, session: AsyncSession = Depends(get_session)):
-    # Auto-create user on first wallet access (so onboarding is implicit)
+    """Return *user_id*'s wallet, auto-creating the user on first access."""
     user = await session.get(User, user_id)
     if not user:
         session.add(User(id=user_id))
@@ -83,6 +101,7 @@ async def topup_wallet(
     body: TopupIn,
     session: AsyncSession = Depends(get_session),
 ):
+    """Add crystals to *user_id*'s wallet (positive amounts only)."""
     if body.amount <= 0:
         raise HTTPException(status_code=400, detail="amount must be positive")
 
@@ -107,6 +126,7 @@ async def topup_wallet(
 
 @app.get("/users/{user_id}/bots", response_model=list[BotOut])
 async def list_user_bots(user_id: str, session: AsyncSession = Depends(get_session)):
+    """Return every bot owned by *user_id*."""
     result = await session.execute(select(Bot).where(Bot.user_id == user_id))
     return [_bot_out(b) for b in result.scalars().all()]
 
@@ -117,6 +137,7 @@ async def create_bot(
     body: CreateBotIn,
     session: AsyncSession = Depends(get_session),
 ):
+    """Plant a new bot for *user_id*. Charges 1 crystal on success."""
     user = await session.get(User, user_id)
     if not user:
         session.add(User(id=user_id))
@@ -136,7 +157,7 @@ async def create_bot(
             token=body.token,
         )
     except RuntimeError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=str(e)) from e
 
     bot = await session.get(Bot, body.bot_id)
     fire("bot_created", {"bot_id": bot.id, "user_id": user_id})
@@ -145,6 +166,7 @@ async def create_bot(
 
 @app.get("/bots/{bot_id}", response_model=BotOut)
 async def get_bot(bot_id: str, session: AsyncSession = Depends(get_session)):
+    """Return a single bot by id."""
     bot = await session.get(Bot, bot_id)
     if not bot:
         raise HTTPException(status_code=404, detail="Bot not found")
@@ -153,6 +175,7 @@ async def get_bot(bot_id: str, session: AsyncSession = Depends(get_session)):
 
 @app.delete("/bots/{bot_id}")
 async def stop_bot(bot_id: str, session: AsyncSession = Depends(get_session)):
+    """Reap a bot and mark it hibernated."""
     bot = await session.get(Bot, bot_id)
     if not bot:
         raise HTTPException(status_code=404, detail="Bot not found")

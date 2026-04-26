@@ -1,13 +1,21 @@
-"""Tiny mock subscriber for testing the event publisher pipeline."""
+"""Tiny mock subscriber for testing the event publisher pipeline.
+
+Listens on ``MOCK_PORT`` (default 8765) and exposes:
+
+* ``POST /events``   — record every event payload.
+* ``GET  /received`` — dump all events received so far.
+"""
+
 import asyncio
-import json
 import os
+
 from aiohttp import web
 
 received: list[dict] = []
 
 
 async def on_event(request: web.Request) -> web.Response:
+    """Append the incoming event to the in-memory ``received`` list."""
     body = await request.json()
     received.append(body)
     print(f"📬 received: {body}")
@@ -15,10 +23,12 @@ async def on_event(request: web.Request) -> web.Response:
 
 
 async def dump(request: web.Request) -> web.Response:
+    """Return everything received so far as JSON."""
     return web.json_response(received)
 
 
-async def main():
+async def main() -> None:
+    """Run the mock subscriber until interrupted."""
     app = web.Application()
     app.router.add_post("/events", on_event)
     app.router.add_get("/received", dump)

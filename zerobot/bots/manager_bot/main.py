@@ -1,17 +1,17 @@
 """ZeroBot Manager Bot — admin control plane over Telegram.
 
 Runs as a standalone first-party process (not planted via the platform).
-Polls Telegram for admin commands AND exposes an HTTP /events endpoint
+Polls Telegram for admin commands AND exposes an HTTP ``/events`` endpoint
 that the platform pushes notifications to.
 
 Required env:
-    MANAGER_BOT_TOKEN      — Telegram token for this bot
-    MANAGER_ADMIN_CHAT_ID  — your Telegram chat id (admin only)
-    ADMIN_TOKEN            — shared secret for admin_console
+    MANAGER_BOT_TOKEN      Telegram token for this bot
+    MANAGER_ADMIN_CHAT_ID  Your Telegram chat id (admin only)
+    ADMIN_TOKEN            Shared secret for the admin console
 Optional env:
-    ADMIN_CONSOLE_URL      — default http://127.0.0.1:8002
-    USER_CONSOLE_URL       — default http://127.0.0.1:8000
-    MANAGER_EVENT_PORT     — default 8003
+    ADMIN_CONSOLE_URL      Default ``http://127.0.0.1:8002``
+    USER_CONSOLE_URL       Default ``http://127.0.0.1:8000``
+    MANAGER_EVENT_PORT     Default ``8003``
 """
 
 import asyncio
@@ -22,10 +22,9 @@ import httpx
 from aiogram import Bot, Dispatcher, Router
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
-from aiogram.filters import Command, CommandObject, CommandStart, BaseFilter
+from aiogram.filters import BaseFilter, Command, CommandObject, CommandStart
 from aiogram.types import Message
 from aiohttp import web
-
 
 # ─────────────── Config ───────────────
 
@@ -71,6 +70,8 @@ dp.include_router(router)
 
 
 class AdminFilter(BaseFilter):
+    """Allow only the configured admin chat to invoke commands."""
+
     async def __call__(self, message: Message) -> bool:
         return message.chat.id == ADMIN_CHAT_ID
 
@@ -84,6 +85,7 @@ FOOTER = "\n\n<i>Powered by @iLildev</i>"
 
 
 def _split_args(command: CommandObject, n: int) -> list[str] | None:
+    """Split the command's args into exactly *n* whitespace-separated parts."""
     if not command.args:
         return None
     parts = command.args.split(maxsplit=n - 1)
@@ -93,6 +95,7 @@ def _split_args(command: CommandObject, n: int) -> list[str] | None:
 
 
 async def _api_error_text(r: httpx.Response) -> str:
+    """Render a non-2xx response into a Telegram-friendly error message."""
     try:
         return f"❌ {r.status_code}: <code>{r.json().get('detail', r.text)}</code>"
     except Exception:
@@ -104,6 +107,7 @@ async def _api_error_text(r: httpx.Response) -> str:
 
 @router.message(CommandStart(), admin_only)
 async def cmd_start(m: Message):
+    """Show the admin command menu."""
     await m.answer(
         "👑 <b>ZeroBot Manager</b>\n\n"
         "<b>System:</b>\n"
@@ -118,15 +122,16 @@ async def cmd_start(m: Message):
         "<b>Bots:</b>\n"
         "/bots — list all bots\n"
         "/bot <code>&lt;id&gt;</code> — bot details\n"
-        "/wake <code>&lt;bot&gt;</code> · /hibernate <code>&lt;bot&gt;</code> · /restart <code>&lt;bot&gt;</code>\n\n"
+        "/wake <code>&lt;bot&gt;</code> · /hibernate <code>&lt;bot&gt;</code> · "
+        "/restart <code>&lt;bot&gt;</code>\n\n"
         "<b>Official:</b>\n"
-        "/official — list official bots"
-        + FOOTER
+        "/official — list official bots" + FOOTER
     )
 
 
 @router.message(Command("stats"), admin_only)
 async def cmd_stats(m: Message):
+    """Show platform-wide counters."""
     r = await admin_http.get("/admin/stats")
     if r.status_code != 200:
         await m.answer(await _api_error_text(r))
@@ -141,13 +146,13 @@ async def cmd_stats(m: Message):
         f"official {s['bots_official']})\n"
         f"🔌 Ports: <b>{s['ports_used']}</b>/{s['ports_total']} used "
         f"(free {s['ports_free']}, cooldown {s['ports_cooldown']})\n"
-        f"💎 Crystals in circulation: <b>{s['crystals_in_circulation']}</b>"
-        + FOOTER
+        f"💎 Crystals in circulation: <b>{s['crystals_in_circulation']}</b>" + FOOTER
     )
 
 
 @router.message(Command("ports"), admin_only)
 async def cmd_ports(m: Message):
+    """Show only the port-registry summary."""
     r = await admin_http.get("/admin/stats")
     if r.status_code != 200:
         await m.answer(await _api_error_text(r))
@@ -159,13 +164,13 @@ async def cmd_ports(m: Message):
         f"Total: {s['ports_total']}\n"
         f"Used: {s['ports_used']}\n"
         f"Free: {s['ports_free']}\n"
-        f"Cooldown: {s['ports_cooldown']}"
-        + FOOTER
+        f"Cooldown: {s['ports_cooldown']}" + FOOTER
     )
 
 
 @router.message(Command("users"), admin_only)
 async def cmd_users(m: Message):
+    """List the first 30 users with their bot counts."""
     r = await admin_http.get("/admin/users")
     if r.status_code != 200:
         await m.answer(await _api_error_text(r))
@@ -180,8 +185,7 @@ async def cmd_users(m: Message):
     for u in users[:30]:
         admin_tag = " 👑" if u["is_admin"] else ""
         lines.append(
-            f"• <code>{u['id']}</code>{admin_tag} — "
-            f"{u['bot_count']} bots · {u['balance']} 💎"
+            f"• <code>{u['id']}</code>{admin_tag} — {u['bot_count']} bots · {u['balance']} 💎"
         )
     if len(users) > 30:
         lines.append(f"\n…and {len(users) - 30} more")
@@ -190,6 +194,7 @@ async def cmd_users(m: Message):
 
 @router.message(Command("user"), admin_only)
 async def cmd_user(m: Message, command: CommandObject):
+    """Show full details for one user."""
     args = _split_args(command, 1)
     if not args:
         await m.answer("Usage: <code>/user &lt;user_id&gt;</code>")
@@ -202,33 +207,34 @@ async def cmd_user(m: Message, command: CommandObject):
         return
 
     u = r.json()
-    bots_text = "\n".join(
-        f"  • <code>{b['id']}</code> — "
-        f"{'🟢 active' if b['is_active'] else '😴 hibernated'}"
-        f"{' 👑' if b['is_official'] else ''}"
-        for b in u["bots"]
-    ) or "  (no bots)"
+    bots_text = (
+        "\n".join(
+            f"  • <code>{b['id']}</code> — "
+            f"{'🟢 active' if b['is_active'] else '😴 hibernated'}"
+            f"{' 👑' if b['is_official'] else ''}"
+            for b in u["bots"]
+        )
+        or "  (no bots)"
+    )
 
     await m.answer(
         f"👤 <b>User</b> <code>{u['id']}</code>{' 👑' if u['is_admin'] else ''}\n"
         f"💎 Balance: <b>{u['balance']}</b>\n"
         f"📅 Created: {u['created_at']}\n\n"
-        f"<b>Bots:</b>\n{bots_text}"
-        + FOOTER
+        f"<b>Bots:</b>\n{bots_text}" + FOOTER
     )
 
 
 @router.message(Command("grant"), admin_only)
 async def cmd_grant(m: Message, command: CommandObject):
+    """Grant crystals to a user."""
     args = _split_args(command, 2)
     if not args or not args[1].lstrip("-").isdigit():
         await m.answer("Usage: <code>/grant &lt;user_id&gt; &lt;amount&gt;</code>")
         return
 
     user_id, amount = args[0], int(args[1])
-    r = await admin_http.post(
-        f"/admin/users/{user_id}/wallet/grant", json={"amount": amount}
-    )
+    r = await admin_http.post(f"/admin/users/{user_id}/wallet/grant", json={"amount": amount})
     if r.status_code != 200:
         await m.answer(await _api_error_text(r))
         return
@@ -239,15 +245,14 @@ async def cmd_grant(m: Message, command: CommandObject):
 
 @router.message(Command("deduct"), admin_only)
 async def cmd_deduct(m: Message, command: CommandObject):
+    """Deduct crystals from a user."""
     args = _split_args(command, 2)
     if not args or not args[1].lstrip("-").isdigit():
         await m.answer("Usage: <code>/deduct &lt;user_id&gt; &lt;amount&gt;</code>")
         return
 
     user_id, amount = args[0], int(args[1])
-    r = await admin_http.post(
-        f"/admin/users/{user_id}/wallet/deduct", json={"amount": amount}
-    )
+    r = await admin_http.post(f"/admin/users/{user_id}/wallet/deduct", json={"amount": amount})
     if r.status_code != 200:
         await m.answer(await _api_error_text(r))
         return
@@ -258,6 +263,7 @@ async def cmd_deduct(m: Message, command: CommandObject):
 
 @router.message(Command("promote"), admin_only)
 async def cmd_promote(m: Message, command: CommandObject):
+    """Promote a user to admin."""
     args = _split_args(command, 1)
     if not args:
         await m.answer("Usage: <code>/promote &lt;user_id&gt;</code>")
@@ -271,6 +277,7 @@ async def cmd_promote(m: Message, command: CommandObject):
 
 @router.message(Command("demote"), admin_only)
 async def cmd_demote(m: Message, command: CommandObject):
+    """Demote an admin back to a regular user."""
     args = _split_args(command, 1)
     if not args:
         await m.answer("Usage: <code>/demote &lt;user_id&gt;</code>")
@@ -284,6 +291,7 @@ async def cmd_demote(m: Message, command: CommandObject):
 
 @router.message(Command("bots"), admin_only)
 async def cmd_bots(m: Message):
+    """List the first 30 bots across the platform."""
     r = await admin_http.get("/admin/bots")
     if r.status_code != 200:
         await m.answer(await _api_error_text(r))
@@ -299,8 +307,7 @@ async def cmd_bots(m: Message):
         state = "🟢" if b["is_active"] else "😴"
         official = " 👑" if b["is_official"] else ""
         lines.append(
-            f"{state} <code>{b['id']}</code>{official} "
-            f"— owner <code>{b['user_id']}</code>"
+            f"{state} <code>{b['id']}</code>{official} — owner <code>{b['user_id']}</code>"
         )
     if len(bots) > 30:
         lines.append(f"\n…and {len(bots) - 30} more")
@@ -309,6 +316,7 @@ async def cmd_bots(m: Message):
 
 @router.message(Command("bot"), admin_only)
 async def cmd_bot(m: Message, command: CommandObject):
+    """Show full details for one bot."""
     args = _split_args(command, 1)
     if not args:
         await m.answer("Usage: <code>/bot &lt;bot_id&gt;</code>")
@@ -325,12 +333,12 @@ async def cmd_bot(m: Message, command: CommandObject):
         f"State: {'🟢 active' if b['is_active'] else '😴 hibernated'}\n"
         f"Port: {b['port'] if b['port'] is not None else '—'}\n"
         f"Created: {b['created_at']}\n"
-        f"Description: {b['description'] or '—'}"
-        + FOOTER
+        f"Description: {b['description'] or '—'}" + FOOTER
     )
 
 
 async def _bot_action(m: Message, command: CommandObject, action: str, label: str):
+    """Run a /wake | /hibernate | /restart command against the admin API."""
     args = _split_args(command, 1)
     if not args:
         await m.answer(f"Usage: <code>/{action} &lt;bot_id&gt;</code>")
@@ -342,28 +350,31 @@ async def _bot_action(m: Message, command: CommandObject, action: str, label: st
     b = r.json()
     await m.answer(
         f"{label} <code>{b['id']}</code> → "
-        f"{'🟢 active' if b['is_active'] else '😴 hibernated'}"
-        + FOOTER
+        f"{'🟢 active' if b['is_active'] else '😴 hibernated'}" + FOOTER
     )
 
 
 @router.message(Command("wake"), admin_only)
 async def cmd_wake(m: Message, command: CommandObject):
+    """Force-wake a hibernating bot."""
     await _bot_action(m, command, "wake", "⏰")
 
 
 @router.message(Command("hibernate"), admin_only)
 async def cmd_hibernate(m: Message, command: CommandObject):
+    """Force-hibernate a running bot."""
     await _bot_action(m, command, "hibernate", "😴")
 
 
 @router.message(Command("restart"), admin_only)
 async def cmd_restart(m: Message, command: CommandObject):
+    """Restart a bot (reap then wake)."""
     await _bot_action(m, command, "restart", "🔄")
 
 
 @router.message(Command("official"), admin_only)
 async def cmd_official(m: Message):
+    """List official (developer-owned) bots."""
     r = await admin_http.get("/admin/official-bots")
     if r.status_code != 200:
         await m.answer(await _api_error_text(r))
@@ -375,9 +386,7 @@ async def cmd_official(m: Message):
     lines = [f"👑 <b>Official Bots</b> ({len(bots)})\n"]
     for b in bots:
         state = "🟢" if b["is_active"] else "😴"
-        lines.append(
-            f"{state} <code>{b['id']}</code> — {b['name'] or '—'}"
-        )
+        lines.append(f"{state} <code>{b['id']}</code> — {b['name'] or '—'}")
     await m.answer("\n".join(lines) + FOOTER)
 
 
@@ -385,6 +394,7 @@ async def cmd_official(m: Message):
 
 
 def _format_event(event: str, p: dict) -> str | None:
+    """Render an event payload as a human-readable HTML snippet."""
     if event == "user_registered":
         return (
             f"🆕 <b>New user registered</b>\n"
@@ -426,14 +436,12 @@ def _format_event(event: str, p: dict) -> str | None:
             f"+{p.get('amount')} → balance <b>{p.get('balance')}</b>"
         )
     if event == "bot_state_changed":
-        return (
-            f"⚙️ Bot <code>{p.get('bot_id')}</code> "
-            f"{p.get('action', 'changed')}"
-        )
+        return f"⚙️ Bot <code>{p.get('bot_id')}</code> {p.get('action', 'changed')}"
     return f"📬 <b>{event}</b>\n<code>{p}</code>"
 
 
 async def handle_event(request: web.Request) -> web.Response:
+    """Receive an event from the platform and forward it to the admin chat."""
     try:
         data = await request.json()
     except Exception:
@@ -453,6 +461,7 @@ async def handle_event(request: web.Request) -> web.Response:
 
 
 async def start_event_server() -> None:
+    """Start the small aiohttp server that receives platform events."""
     app = web.Application()
     app.router.add_post("/events", handle_event)
     app.router.add_get("/healthz", lambda _: web.json_response({"ok": True}))
@@ -467,6 +476,7 @@ async def start_event_server() -> None:
 
 
 async def main() -> None:
+    """Start the event listener and begin polling Telegram."""
     await start_event_server()
 
     try:

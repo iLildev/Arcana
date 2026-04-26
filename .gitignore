@@ -51,6 +51,21 @@ Thumbs.db
 # Python
 __pycache__/
 *.pyc
+*.pyo
 .env
+.env.local
 .pythonlibs/
+.venv/
+venv/
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# ZeroBot — per-bot virtualenvs and Builder Agent sandbox workspaces
+zerobot/runtime_envs/*
+!zerobot/runtime_envs/.gitkeep
+runtime_envs/
 

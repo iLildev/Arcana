@@ -1,27 +1,35 @@
-import os
-import asyncio
-import logging
+"""Default ZeroBot starter template.
 
-from aiohttp import web
+Spins up an aiohttp webhook receiver that hands every Telegram update off
+to an aiogram dispatcher. This file is copied into a fresh bot's
+directory by the orchestrator; users are expected to extend it.
+"""
+
+import logging
+import os
+
 from aiogram import Bot, Dispatcher, types
+from aiohttp import web
 
 logging.basicConfig(level=logging.INFO)
 
 TOKEN = os.getenv("BOT_TOKEN")
-PORT = int(os.getenv("BOT_PORT", 8080))
+PORT = int(os.getenv("BOT_PORT", "8080"))
 
 bot = Bot(token=TOKEN)
 dp = Dispatcher()
 
 
-# 🧠 مثال handler
+# 🧠 Example handler.
 @dp.message()
 async def echo_handler(message: types.Message):
+    """Echo every incoming text message back to the sender."""
     await message.answer(f"Echo: {message.text}")
 
 
-# 🌐 webhook handler
+# 🌐 Webhook handler.
 async def handle_webhook(request: web.Request):
+    """Forward an inbound Telegram update to the aiogram dispatcher."""
     data = await request.json()
 
     update = types.Update.model_validate(data)
@@ -31,7 +39,7 @@ async def handle_webhook(request: web.Request):
     return web.Response(text="ok")
 
 
-# 🚀 app
+# 🚀 App definition.
 app = web.Application()
 app.router.add_post("/webhook", handle_webhook)
 
