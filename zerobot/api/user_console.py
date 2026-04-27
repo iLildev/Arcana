@@ -11,6 +11,14 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from zerobot.botfather import (
+    BotCommand as BFCommand,
+)
+from zerobot.botfather import (
+    BotFatherError,
+    fetch_bot_profile,
+    update_bot_profile,
+)
 from zerobot.config import settings
 from zerobot.core.orchestrator import Orchestrator
 from zerobot.database.engine import async_session_maker
@@ -246,3 +254,77 @@ async def stop_bot(bot_id: str, session: AsyncSession = Depends(get_session)):
     await session.commit()
 
     return {"status": "stopped"}
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# BotFather automation (Phase 1.ج, Bot API portion)
+# ─────────────────────────────────────────────────────────────────────────
+
+
+class CommandIn(BaseModel):
+    command: str
+    description: str
+
+
+class BotProfileIn(BaseModel):
+    """Partial profile update — only set the fields you want changed."""
+
+    name: str | None = None
+    description: str | None = None
+    short_description: str | None = None
+    commands: list[CommandIn] | None = None
+    language_code: str = ""
+
+
+@app.get("/users/{user_id}/bots/{bot_id}/profile")
+async def get_bot_profile(
+    user_id: str,
+    bot_id: str,
+    session: AsyncSession = Depends(get_session),
+):
+    """Fetch the bot's live profile (name, descriptions, commands) from Telegram."""
+    try:
+        profile = await fetch_bot_profile(session, user_id, bot_id)
+    except BotFatherError as exc:
+        status = exc.code if isinstance(exc.code, int) and 400 <= exc.code < 600 else 502
+        raise HTTPException(status_code=status, detail=str(exc)) from exc
+    return profile.to_dict()
+
+
+@app.patch("/users/{user_id}/bots/{bot_id}/profile")
+async def patch_bot_profile(
+    user_id: str,
+    bot_id: str,
+    body: BotProfileIn,
+    session: AsyncSession = Depends(get_session),
+):
+    """Apply a partial profile update to the bot via the Telegram Bot API."""
+    user = await session.get(User, user_id)
+    if (
+        settings.REQUIRE_PHONE_VERIFICATION
+        and not (user and user.is_admin)
+        and not await is_phone_verified(session, user_id)
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail="phone_verification_required: share your phone before managing bots",
+        )
+
+    payload = body.model_dump(exclude_unset=True)
+    commands = payload.pop("commands", None)
+    if commands is not None:
+        commands = [BFCommand(**c) for c in commands]
+
+    try:
+        results = await update_bot_profile(
+            session,
+            user_id,
+            bot_id,
+            commands=commands,
+            **{k: v for k, v in payload.items() if k != "language_code"},
+            language_code=payload.get("language_code", ""),
+        )
+    except BotFatherError as exc:
+        status = exc.code if isinstance(exc.code, int) and 400 <= exc.code < 600 else 502
+        raise HTTPException(status_code=status, detail=str(exc)) from exc
+    return {"results": results}

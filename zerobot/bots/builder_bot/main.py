@@ -42,10 +42,17 @@ from aiogram.types import (
     ReplyKeyboardMarkup,
     ReplyKeyboardRemove,
 )
+from sqlalchemy import select as sa_select
 
 from zerobot.agents.builder_agent import BuilderAgent
+from zerobot.botfather import (
+    BotFatherError,
+    fetch_bot_profile,
+    update_bot_profile,
+)
 from zerobot.config import settings
 from zerobot.database.engine import AsyncSessionLocal
+from zerobot.database.models import Bot as BotModel
 from zerobot.database.wallet import WalletService
 from zerobot.events.publisher import fire
 from zerobot.identity import (
@@ -252,6 +259,142 @@ async def cmd_stats(message: Message) -> None:
         f"{session.total_output_tokens} output\n"
         f"  مكافئ: ~{crystals_for(session.total_input_tokens + session.total_output_tokens)} كرستالة"
     )
+
+
+# ─────────────── BotFather automation (Phase 1.ج) ───────────────
+
+
+def _split_args(message: Message, *, expected: int) -> list[str] | None:
+    """Return the command arguments, or None if the wrong number was supplied."""
+    text = (message.text or "").strip()
+    parts = text.split(maxsplit=expected)
+    return parts[1:] if len(parts) > expected else None
+
+
+async def _resolve_my_bot(user_id: str, bot_id: str) -> BotModel | None:
+    """Return the bot iff *user_id* owns it."""
+    async with AsyncSessionLocal() as session:
+        bot = await session.get(BotModel, bot_id)
+    return bot if bot and bot.user_id == user_id else None
+
+
+@router.message(Command("mybots"))
+async def cmd_mybots(message: Message) -> None:
+    """List the bots owned by the caller."""
+    if not await _ensure_verified(message):
+        return
+    user_id = tg_user_id(message)
+    async with AsyncSessionLocal() as session:
+        rows = (
+            await session.execute(
+                sa_select(BotModel).where(BotModel.user_id == user_id)
+            )
+        ).scalars().all()
+    if not rows:
+        await message.answer(
+            "📭 لا توجد بوتات بعد. استخدم Builder Agent لإنشاء أوّل بوت."
+        )
+        return
+    lines = ["🤖 <b>بوتاتك:</b>", ""]
+    for b in rows:
+        status = "🟢" if b.is_active else ("💤" if b.is_hibernated else "⚪️")
+        lines.append(f"{status} <code>{b.id}</code> — {b.name or '(بلا اسم)'}")
+    lines += ["", "أوامر الإدارة: /profile · /setname · /setdesc · /setabout"]
+    await message.answer("\n".join(lines), parse_mode="HTML")
+
+
+@router.message(Command("profile"))
+async def cmd_profile(message: Message) -> None:
+    """Show a bot's live profile (name, descriptions, commands)."""
+    if not await _ensure_verified(message):
+        return
+    args = _split_args(message, expected=1)
+    if not args:
+        await message.answer("الاستخدام: <code>/profile &lt;bot_id&gt;</code>", parse_mode="HTML")
+        return
+    user_id = tg_user_id(message)
+    bot_id = args[0]
+    async with AsyncSessionLocal() as session:
+        try:
+            profile = await fetch_bot_profile(session, user_id, bot_id)
+        except BotFatherError as exc:
+            await message.answer(f"❌ تعذّر القراءة: {exc}")
+            return
+    cmds = "\n".join(f"  /{c.command} — {c.description}" for c in profile.commands) or "  (لا يوجد)"
+    await message.answer(
+        f"🪪 <b>@{profile.username or '?'}</b>\n"
+        f"الاسم: {profile.name or '(فارغ)'}\n"
+        f"About: {profile.short_description or '(فارغ)'}\n"
+        f"الوصف: {profile.description or '(فارغ)'}\n"
+        f"الأوامر:\n{cmds}",
+        parse_mode="HTML",
+    )
+
+
+async def _apply_profile_update(
+    message: Message, bot_id: str, **fields
+) -> None:
+    """Shared helper for /setname, /setdesc, /setabout."""
+    user_id = tg_user_id(message)
+    if await _resolve_my_bot(user_id, bot_id) is None:
+        await message.answer("❌ لم أجد هذا البوت ضمن بوتاتك.")
+        return
+    async with AsyncSessionLocal() as session:
+        try:
+            results = await update_bot_profile(session, user_id, bot_id, **fields)
+        except BotFatherError as exc:
+            await message.answer(f"❌ {exc}")
+            return
+    line = next(iter(results.values()), "no-op")
+    if line == "ok":
+        await message.answer("✅ تم.")
+    else:
+        await message.answer(f"⚠️ {line}")
+
+
+@router.message(Command("setname"))
+async def cmd_setname(message: Message) -> None:
+    """Rename a bot. Usage: /setname <bot_id> <new name…>"""
+    if not await _ensure_verified(message):
+        return
+    args = _split_args(message, expected=2)
+    if not args or len(args) < 2 or not args[1].strip():
+        await message.answer(
+            "الاستخدام: <code>/setname &lt;bot_id&gt; &lt;الاسم الجديد&gt;</code>",
+            parse_mode="HTML",
+        )
+        return
+    await _apply_profile_update(message, args[0], name=args[1].strip())
+
+
+@router.message(Command("setdesc"))
+async def cmd_setdesc(message: Message) -> None:
+    """Update the long description. Usage: /setdesc <bot_id> <description…>"""
+    if not await _ensure_verified(message):
+        return
+    args = _split_args(message, expected=2)
+    if not args or len(args) < 2 or not args[1].strip():
+        await message.answer(
+            "الاستخدام: <code>/setdesc &lt;bot_id&gt; &lt;الوصف&gt;</code>",
+            parse_mode="HTML",
+        )
+        return
+    await _apply_profile_update(message, args[0], description=args[1].strip())
+
+
+@router.message(Command("setabout"))
+async def cmd_setabout(message: Message) -> None:
+    """Update the short "about" line (≤120 chars). Usage: /setabout <bot_id> <text…>"""
+    if not await _ensure_verified(message):
+        return
+    args = _split_args(message, expected=2)
+    if not args or len(args) < 2 or not args[1].strip():
+        await message.answer(
+            "الاستخدام: <code>/setabout &lt;bot_id&gt; &lt;النصّ&gt;</code>",
+            parse_mode="HTML",
+        )
+        return
+    await _apply_profile_update(message, args[0], short_description=args[1].strip())
 
 
 @router.message(Command("unlink_phone"))

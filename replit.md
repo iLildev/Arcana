@@ -90,6 +90,35 @@ be globally disabled via `REQUIRE_PHONE_VERIFICATION=false` for tests).
 - **Admin Console + Manager Bot** — `/identity`, `/unverify`,
   `/unlink_session`, `/setquota` admin overrides.
 
+## Phase 1.ج — BotFather automation, Bot API portion (April 2026)
+
+Users can now manage their planted bots' public profile (name,
+descriptions, slash-commands) from inside ZeroBot — without ever
+opening @BotFather. Photo uploads, token rotation, and bot deletion
+ship in a follow-up phase that needs an MTProto user session.
+
+- **`zerobot/botfather/`** — async `BotFatherClient` wrapping the
+  Telegram Bot API self-management endpoints (`getMe`,
+  `set/getMyName`, `set/getMyDescription`, `set/getMyShortDescription`,
+  `set/getMyCommands`, `deleteMyCommands`). Local validation matches
+  Telegram's documented limits so we fail fast.
+- **Service layer** — `fetch_bot_profile()` and `update_bot_profile()`
+  enforce ownership (`bot.user_id == caller`) and write one
+  `BotFatherOperation` audit row per attempted op. Partial updates only
+  hit the fields the caller passes; per-field failures are reported in
+  the response without aborting the rest.
+- **User Console API** — `GET /users/{uid}/bots/{bid}/profile` reads
+  the live profile; `PATCH /users/{uid}/bots/{bid}/profile` accepts any
+  subset of `{name, description, short_description, commands}`. Phone
+  gate enforced (admins exempt).
+- **Builder Bot** — new commands: `/mybots`, `/profile <bot_id>`,
+  `/setname <bot_id> <name>`, `/setdesc <bot_id> <desc>`, `/setabout
+  <bot_id> <about>`. All gated on phone verification.
+- **Tests** — 15 new tests using `httpx.MockTransport` (no real
+  network) cover client validation, transport happy paths, error
+  surfacing, ownership enforcement, partial updates, audit logging,
+  and per-field failure recording.
+
 ## Notes
 
 - The `artifacts/` directory contains an unrelated pnpm/TypeScript template
