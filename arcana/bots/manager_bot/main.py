@@ -28,6 +28,7 @@ from aiogram.filters import BaseFilter, Command, CommandObject, CommandStart
 from aiogram.types import Message
 from aiohttp import web
 
+from arcana.bots.middleware import ThrottlingMiddleware, build_error_router
 from arcana.events.publisher import SIGNATURE_HEADER, verify_signature
 
 log = logging.getLogger(__name__)
@@ -73,6 +74,14 @@ bot = Bot(
 )
 dp = Dispatcher()
 router = Router()
+
+# Outer protection layers — same pattern as the Builder Bot. Throttling is
+# generous here since this is admin-only traffic; the error catcher is the
+# important part: without it, an exception in any /command tears down
+# polling silently.
+dp.message.middleware(ThrottlingMiddleware(default_rate=0.2))
+dp.callback_query.middleware(ThrottlingMiddleware(default_rate=0.2))
+dp.include_router(build_error_router(bot_label="manager_bot"))
 dp.include_router(router)
 
 
@@ -494,10 +503,48 @@ async def cmd_official(m: Message):
 def _format_event(event: str, p: dict) -> str | None:
     """Render an event payload as a human-readable HTML snippet."""
     if event == "user_registered":
+        # The Builder Bot enriches this event with handle / full name /
+        # language so the admin gets a recognisable card instead of a
+        # bare numeric id.
+        username = p.get("username")
+        handle = f"@{username}" if username else "—"
+        name = p.get("full_name") or "—"
+        lang = p.get("language") or "—"
         return (
             f"🆕 <b>New user registered</b>\n"
+            f"Name: {name}\n"
+            f"Handle: {handle}\n"
             f"ID: <code>{p.get('user_id')}</code>\n"
+            f"Lang: {lang}\n"
             f"Source: {p.get('source', '?')}"
+        )
+    if event == "user_blocked_bot":
+        return (
+            f"🚫 <b>User blocked the bot</b>\n"
+            f"ID: <code>{p.get('user_id')}</code>"
+        )
+    if event == "user_unblocked_bot":
+        return (
+            f"🔓 <b>User un-blocked the bot</b>\n"
+            f"ID: <code>{p.get('user_id')}</code>"
+        )
+    if event == "broadcast_completed":
+        return (
+            f"📣 <b>Broadcast finished</b>\n"
+            f"By: <code>{p.get('user_id')}</code>\n"
+            f"Sent: {p.get('sent', 0)} · "
+            f"Blocked: {p.get('blocked', 0)} · "
+            f"Failed: {p.get('failed', 0)}"
+        )
+    if event == "bot_error":
+        # Trim the trace so we never blow past Telegram's 4096-char limit.
+        trace = (p.get("trace") or "")[-1500:]
+        return (
+            f"💥 <b>Bot error</b> in <code>{p.get('bot', '?')}</code>\n"
+            f"User: <code>{p.get('user_id') or '—'}</code>\n"
+            f"Update: <code>{p.get('update_id', '—')}</code>\n"
+            f"<b>{p.get('error', 'unknown')}</b>\n"
+            f"<pre>{trace}</pre>"
         )
     if event == "bot_created":
         return (
@@ -564,7 +611,29 @@ async def handle_event(request: web.Request) -> web.Response:
     text = _format_event(event, payload)
     if text:
         try:
-            await bot.send_message(ADMIN_CHAT_ID, text + FOOTER)
+            # ``user_registered`` may carry a profile-photo ``file_id``
+            # captured by the Builder Bot. ``file_id`` values are valid
+            # across bots that share the same Telegram Bot API server, so
+            # we can re-send the avatar without re-uploading. Telegram
+            # caps photo captions at 1024 chars; the registration card is
+            # well under that limit.
+            photo_file_id = (
+                payload.get("photo_file_id") if event == "user_registered" else None
+            )
+            if photo_file_id:
+                try:
+                    await bot.send_photo(
+                        ADMIN_CHAT_ID,
+                        photo=photo_file_id,
+                        caption=text + FOOTER,
+                    )
+                except Exception as e:
+                    # Fall back to text — the photo file_id may have
+                    # expired or be unreachable from this bot.
+                    log.warning("send_photo failed (%s); falling back to text", e)
+                    await bot.send_message(ADMIN_CHAT_ID, text + FOOTER)
+            else:
+                await bot.send_message(ADMIN_CHAT_ID, text + FOOTER)
         except Exception as e:
             print(f"⚠️  Failed to notify admin: {e}", file=sys.stderr)
 

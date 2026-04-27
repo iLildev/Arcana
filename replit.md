@@ -151,5 +151,61 @@ ship in a follow-up phase that needs an MTProto user session.
   TypeScript artifact for live preview only.
 - Per-bot virtualenvs and Builder Agent sandbox workspaces live under
   `arcana/runtime_envs/` and are gitignored (see `.gitignore`).
-- The pytest suite passes 86/86 tests against an in-memory SQLite DB
+- The pytest suite passes 157/157 tests against an in-memory SQLite DB
   (no external services required).
+
+## Reusable middleware & services (Wave 1 port from rdfsx/aiogram-template)
+
+After analysing `rdfsx/aiogram-template` we ported only the patterns that
+fit Arcana's architecture (skipping its MongoDB/Russian-UI assumptions):
+
+- **`arcana/bots/middleware/`** — bot-agnostic middlewares shared by
+  Builder Bot and Manager Bot:
+  - `ThrottlingMiddleware` — pure-Python per-(user, handler) sliding-
+    window limiter (no `aiolimiter` dep). Handlers can opt into a custom
+    rate via `@throttle(seconds)`.
+  - `DBSessionMiddleware` — opens an `AsyncSession` per handler call and
+    rolls back on uncaught exceptions. Handlers receive the session via
+    aiogram DI (`session=` kwarg).
+  - `build_error_router(bot_label, apology_text=None)` — global error
+    catcher that logs the trace, emits a typed `bot_error` event to the
+    Manager Bot's `/events` endpoint, and optionally apologises to the
+    user. Returns a `Router` ready to `include_router(...)`.
+- **`arcana/services/broadcast.py`** — `broadcast_text(bot, user_ids,
+  text, ...)` helper that handles `TelegramRetryAfter` (sleeps + retries
+  once), `TelegramForbiddenError` (counts blocked users + invokes
+  `on_blocked` hook), and other API errors. Returns a `BroadcastResult`
+  dataclass with `sent / blocked / failed / total` counters. Accepts
+  both sync iterables and async generators (for streamed DB cursors).
+
+### New events flowing through the platform event bus
+
+- `user_registered` — fired exactly once on first phone-verification.
+  Now carries `username`, `full_name`, `language`, `telegram_user_id`
+  and a `photo_file_id` (the user's largest available profile photo,
+  reusable across bots so the Manager Bot re-sends it via `send_photo`
+  with no re-upload).
+- `user_blocked_bot` / `user_unblocked_bot` — emitted from the new
+  `my_chat_member` handler in Builder Bot, so admins are notified the
+  moment a user blocks/un-blocks the bot.
+- `bot_error` — emitted by every bot's error router on any un-handled
+  exception (carries `bot`, `error`, `user_id`, `update_id`, `trace`).
+- `broadcast_completed` — emitted at the end of every `/broadcast`
+  with `sent / blocked / failed / total` counts.
+
+### New Builder Bot command
+
+- `/broadcast <message>` — admin-only, throttled at 5s/call. Selects
+  every user with `phone_verified_at IS NOT NULL`, sends in parallel
+  with the broadcast service, and posts a final summary to the admin.
+  Localised in all 6 supported languages (ar / en / fr / es / ru / tr).
+
+### Test coverage added
+
+- `tests/test_throttling_middleware.py` (7 tests) — drop, isolation by
+  user/handler, decorator override, no-user pass-through.
+- `tests/test_db_session_middleware.py` (3 tests) — session injection,
+  commit visibility, rollback-on-exception (uses `aiosqlite`).
+- `tests/test_broadcast_service.py` (7 tests) — success, blocked +
+  callback, FloodWait retry, generic API errors, progress callback,
+  async-iterable input.

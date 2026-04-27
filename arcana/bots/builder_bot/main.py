@@ -43,6 +43,7 @@ from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command, CommandStart
 from aiogram.types import (
     CallbackQuery,
+    ChatMemberUpdated,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
     KeyboardButton,
@@ -64,6 +65,12 @@ from arcana.bots.builder_bot.locales import (
     normalize_lang,
     t,
 )
+from arcana.bots.middleware import (
+    DBSessionMiddleware,
+    ThrottlingMiddleware,
+    build_error_router,
+    throttle,
+)
 from arcana.config import settings
 from arcana.database.engine import AsyncSessionLocal
 from arcana.database.models import Bot as BotModel
@@ -76,6 +83,7 @@ from arcana.identity import (
     record_phone_verification,
     unlink_phone,
 )
+from arcana.services.broadcast import broadcast_text
 
 # ─────────────── Config ───────────────
 
@@ -574,6 +582,28 @@ async def cmd_unlink_phone(message: Message) -> None:
 # ─────────────── Contact handler ───────────────
 
 
+async def _fetch_profile_photo_id(tg_user_id_int: int) -> str | None:
+    """Return the user's biggest available profile-photo ``file_id`` or ``None``.
+
+    ``file_id`` from ``getUserProfilePhotos`` is reusable across bots that
+    share the same Bot API server, so the Manager Bot can re-send it as a
+    ``send_photo`` without re-uploading. Failures are non-fatal — we'd
+    rather log a "new user" event without a picture than fail the contact
+    handler.
+    """
+    try:
+        photos = await bot.get_user_profile_photos(tg_user_id_int, limit=1)
+    except Exception:  # noqa: BLE001
+        log.debug("could not fetch profile photos for %s", tg_user_id_int)
+        return None
+    if not photos.total_count or not photos.photos:
+        return None
+    # Each entry in photos.photos is a list of PhotoSize from smallest to
+    # largest; the last item is the highest resolution.
+    sizes = photos.photos[0]
+    return sizes[-1].file_id if sizes else None
+
+
 @router.message(F.contact)
 async def on_contact(message: Message) -> None:
     """Handle the contact-share that completes phone verification."""
@@ -586,8 +616,16 @@ async def on_contact(message: Message) -> None:
         return
 
     user_id = tg_user_id(message)
+    is_new_user = False
     try:
         async with AsyncSessionLocal() as session:
+            # Detect first-time registration *before* recording the phone
+            # so we can fire ``user_registered`` once and only once. We
+            # don't touch the row here — ``record_phone_verification``
+            # will create/update it transactionally below.
+            existing = await session.get(User, user_id)
+            is_new_user = existing is None
+
             await record_phone_verification(
                 session,
                 user_id,
@@ -604,10 +642,136 @@ async def on_contact(message: Message) -> None:
         return
 
     fire("phone_verified", {"user_id": user_id, "source": "builder_bot"})
+
+    if is_new_user:
+        # Enrich the registration event with the data the Manager Bot
+        # needs to render a friendly "new user" card (avatar + handle).
+        from_user = message.from_user
+        photo_file_id = await _fetch_profile_photo_id(from_user.id)
+        full_name = " ".join(
+            part for part in (from_user.first_name, from_user.last_name) if part
+        ).strip() or None
+        fire(
+            "user_registered",
+            {
+                "user_id": user_id,
+                "telegram_user_id": from_user.id,
+                "username": from_user.username,
+                "full_name": full_name,
+                "language": lang,
+                "photo_file_id": photo_file_id,
+                "source": "builder_bot",
+            },
+        )
+
     await message.answer(
         t("phone_verified_ok", lang),
         parse_mode="HTML",
         reply_markup=ReplyKeyboardRemove(),
+    )
+
+
+# ─────────────── Block / unblock tracking ───────────────
+
+
+@router.my_chat_member()
+async def on_my_chat_member(event: ChatMemberUpdated) -> None:
+    """Detect when a user blocks or unblocks the bot.
+
+    Telegram delivers a ``my_chat_member`` update whenever the bot's
+    membership in a chat changes; for private chats that means the user
+    either started/un-blocked us (status ``member``) or stopped/blocked
+    us (status ``kicked``). We fire a typed event so the Manager Bot can
+    notify the admin and the broadcast service can skip dead chats.
+    """
+    if event.chat.type != "private":
+        return
+    user_id = f"tg-{event.from_user.id}"
+    new_status = event.new_chat_member.status
+    old_status = event.old_chat_member.status
+    if old_status == new_status:
+        return
+    if new_status == "kicked":
+        fire(
+            "user_blocked_bot",
+            {
+                "user_id": user_id,
+                "telegram_user_id": event.from_user.id,
+                "username": event.from_user.username,
+                "source": "builder_bot",
+            },
+        )
+    elif new_status == "member" and old_status == "kicked":
+        fire(
+            "user_unblocked_bot",
+            {
+                "user_id": user_id,
+                "telegram_user_id": event.from_user.id,
+                "username": event.from_user.username,
+                "source": "builder_bot",
+            },
+        )
+
+
+# ─────────────── /broadcast (admin-only) ───────────────
+
+
+@router.message(Command("broadcast"))
+@throttle(5.0)
+async def cmd_broadcast(message: Message) -> None:
+    """Send a free-form message to every verified user. Admin-only."""
+    lang = await _lang_for(message)
+    user_id = tg_user_id(message)
+    if not _is_admin(user_id):
+        await message.answer(t("admin_only", lang))
+        return
+
+    # Strip the leading "/broadcast" command and keep the raw payload.
+    text = message.text or ""
+    body = text.partition(" ")[2].strip()
+    if not body:
+        await message.answer(t("broadcast_usage", lang), parse_mode="HTML")
+        return
+
+    # Collect every verified user that has a Telegram numeric id.
+    async with AsyncSessionLocal() as session:
+        rows = (
+            await session.execute(
+                sa_select(User.id).where(User.phone_verified_at.is_not(None))
+            )
+        ).all()
+    recipients: list[int] = []
+    for (uid,) in rows:
+        if uid and uid.startswith("tg-"):
+            try:
+                recipients.append(int(uid[3:]))
+            except ValueError:
+                continue
+
+    if not recipients:
+        await message.answer(t("broadcast_no_recipients", lang))
+        return
+
+    await message.answer(t("broadcast_started", lang, count=len(recipients)))
+    result = await broadcast_text(bot, recipients, body, parse_mode="HTML")
+    fire(
+        "broadcast_completed",
+        {
+            "user_id": user_id,
+            "sent": result.sent,
+            "blocked": result.blocked,
+            "failed": result.failed,
+            "total": result.total,
+        },
+    )
+    await message.answer(
+        t(
+            "broadcast_done",
+            lang,
+            sent=result.sent,
+            blocked=result.blocked,
+            failed=result.failed,
+        )
     )
 
 
@@ -712,7 +876,16 @@ def _truncate(s: str, n: int) -> str:
 async def main() -> None:
     """Start long-polling Telegram for messages."""
     dp = Dispatcher()
+
+    # Middlewares run outer→inner, so:
+    #   1. Throttling drops abusive events first (cheapest possible reject).
+    #   2. The error router catches anything the handlers raise and emits
+    #      a ``bot_error`` event so admins see the trace in real time.
+    dp.message.middleware(ThrottlingMiddleware(default_rate=0.3))
+    dp.callback_query.middleware(ThrottlingMiddleware(default_rate=0.3))
+    dp.include_router(build_error_router(bot_label="builder_bot"))
     dp.include_router(router)
+
     log.info(
         "Builder Bot starting (admin=%s, rate=%s tok/crystal, phone_gate=%s, "
         "default_lang=%s, supported=%s)",

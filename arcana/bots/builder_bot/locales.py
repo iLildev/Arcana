@@ -783,6 +783,55 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "ru": "💎 -{cost} (осталось {balance})",
         "tr": "💎 -{cost} (kalan {balance})",
     },
+    # ── /broadcast (admin-only) ──────────────────────────────────────────
+    "broadcast_usage": {
+        "ar": "الاستخدام: <code>/broadcast &lt;الرسالة&gt;</code>",
+        "en": "Usage: <code>/broadcast &lt;message&gt;</code>",
+        "fr": "Usage : <code>/broadcast &lt;message&gt;</code>",
+        "es": "Uso: <code>/broadcast &lt;mensaje&gt;</code>",
+        "ru": "Использование: <code>/broadcast &lt;сообщение&gt;</code>",
+        "tr": "Kullanım: <code>/broadcast &lt;mesaj&gt;</code>",
+    },
+    "broadcast_started": {
+        "ar": "📣 بدأ البثّ إلى {count} مستخدم…",
+        "en": "📣 Broadcast started to {count} users…",
+        "fr": "📣 Diffusion lancée vers {count} utilisateurs…",
+        "es": "📣 Difusión iniciada a {count} usuarios…",
+        "ru": "📣 Рассылка запущена для {count} пользователей…",
+        "tr": "📣 Yayın {count} kullanıcıya başlatıldı…",
+    },
+    "broadcast_done": {
+        "ar": "✅ انتهى البثّ — تمّ: {sent} · محظور: {blocked} · فشل: {failed}",
+        "en": "✅ Broadcast done — sent: {sent} · blocked: {blocked} · failed: {failed}",
+        "fr": "✅ Diffusion terminée — envoyé : {sent} · bloqué : {blocked} · échec : {failed}",
+        "es": "✅ Difusión completada — enviado: {sent} · bloqueado: {blocked} · fallido: {failed}",
+        "ru": "✅ Рассылка завершена — отправлено: {sent} · заблокировано: {blocked} · ошибок: {failed}",
+        "tr": "✅ Yayın tamam — gönderildi: {sent} · engellendi: {blocked} · başarısız: {failed}",
+    },
+    "broadcast_no_recipients": {
+        "ar": "ℹ️ لا يوجد مستلمون مؤهّلون للبثّ.",
+        "en": "ℹ️ No eligible recipients to broadcast to.",
+        "fr": "ℹ️ Aucun destinataire éligible pour la diffusion.",
+        "es": "ℹ️ No hay destinatarios elegibles para la difusión.",
+        "ru": "ℹ️ Нет подходящих получателей для рассылки.",
+        "tr": "ℹ️ Yayınlanacak uygun alıcı yok.",
+    },
+    "admin_only": {
+        "ar": "🚫 هذا الأمر للمسؤولين فقط.",
+        "en": "🚫 This command is admin-only.",
+        "fr": "🚫 Cette commande est réservée aux administrateurs.",
+        "es": "🚫 Este comando es solo para administradores.",
+        "ru": "🚫 Эта команда доступна только администраторам.",
+        "tr": "🚫 Bu komut yalnızca yöneticiler içindir.",
+    },
+    "generic_error": {
+        "ar": "⚠️ حدث خطأ غير متوقّع. تمّ تنبيه فريق التشغيل.",
+        "en": "⚠️ An unexpected error occurred. Operators have been notified.",
+        "fr": "⚠️ Une erreur inattendue s'est produite. Les opérateurs ont été notifiés.",
+        "es": "⚠️ Ocurrió un error inesperado. Se notificó a los operadores.",
+        "ru": "⚠️ Произошла непредвиденная ошибка. Операторы уведомлены.",
+        "tr": "⚠️ Beklenmeyen bir hata oluştu. Operatörler bilgilendirildi.",
+    },
 }
 
 
