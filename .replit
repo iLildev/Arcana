@@ -1,4 +1,4 @@
-modules = ["nodejs-24", "python-3.11", "postgresql-16"]
+modules = ["python-3.11"]
 
 [deployment]
 router = "application"
@@ -32,7 +32,7 @@ task = "shell.exec"
 args = "pip install -e '.[dev]' --quiet && pytest -p no:unraisableexception"
 
 [agent]
-stack = "PNPM_WORKSPACE"
+stack = "BEST_EFFORT_FALLBACK"
 expertMode = true
 
 [postMerge]
