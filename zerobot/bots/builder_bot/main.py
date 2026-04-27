@@ -6,6 +6,10 @@ intermediate text are streamed back by editing a placeholder reply
 in-place. After the turn completes, crystals are deducted from the user's
 wallet (the platform admin defined by ``ADMIN_USER_ID`` is exempt).
 
+Phase 0: every non-admin user must verify their phone number (via
+Telegram's request_contact button) before the agent will run. A user can
+clear their data at any time with /unlink_phone.
+
 Required env:
     BUILDER_BOT_TOKEN          Telegram bot token (from BotFather)
 Optional env (with defaults):
@@ -32,12 +36,24 @@ from collections import defaultdict
 from aiogram import Bot, Dispatcher, F, Router
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command, CommandStart
-from aiogram.types import Message
+from aiogram.types import (
+    KeyboardButton,
+    Message,
+    ReplyKeyboardMarkup,
+    ReplyKeyboardRemove,
+)
 
 from zerobot.agents.builder_agent import BuilderAgent
+from zerobot.config import settings
 from zerobot.database.engine import AsyncSessionLocal
 from zerobot.database.wallet import WalletService
 from zerobot.events.publisher import fire
+from zerobot.identity import (
+    PhoneError,
+    is_phone_verified,
+    record_phone_verification,
+    unlink_phone,
+)
 
 # ─────────────── Config ───────────────
 
@@ -93,6 +109,57 @@ def chunk_text(text: str, limit: int = MAX_REPLY_LEN) -> list[str]:
     return chunks
 
 
+# ─────────────── Identity gate ───────────────
+
+# Reply-keyboard offering the contact-share button. Telegram guarantees
+# that a Contact produced by request_contact is the user's own verified
+# phone number — it cannot be spoofed.
+_CONTACT_KB = ReplyKeyboardMarkup(
+    keyboard=[
+        [KeyboardButton(text="📱 شارك رقمي للتحقق", request_contact=True)],
+    ],
+    resize_keyboard=True,
+    one_time_keyboard=True,
+)
+
+
+async def _prompt_phone_share(message: Message) -> None:
+    """Ask the user to share their phone via Telegram's contact button."""
+    await message.answer(
+        "🔒 <b>تحقّق سريع قبل البدء</b>\n\n"
+        "قبل استخدام Builder Agent، يرجى التحقّق من حسابك عبر مشاركة رقمك من Telegram.\n\n"
+        "<b>لماذا؟</b>\n"
+        "• حماية المنصّة من السبام والحسابات الوهمية\n"
+        "• حدّ عادل للموارد لكل مستخدم\n"
+        "• تمكين إدارة بوتاتك لاحقاً عبر BotFather آلياً\n\n"
+        "اضغط الزرّ بالأسفل. يمكنك حذف بياناتك في أي وقت بالأمر /unlink_phone",
+        parse_mode="HTML",
+        reply_markup=_CONTACT_KB,
+    )
+
+
+def _is_admin(user_id: str) -> bool:
+    """Phone gate is bypassed for the platform admin."""
+    return bool(ADMIN_USER_ID) and user_id == ADMIN_USER_ID
+
+
+async def _ensure_verified(message: Message) -> bool:
+    """Return True iff the user has a verified phone (admin always passes).
+
+    On a verification miss, sends the contact-share prompt and returns False
+    so the caller can short-circuit cleanly.
+    """
+    user_id = tg_user_id(message)
+    if _is_admin(user_id) or not settings.REQUIRE_PHONE_VERIFICATION:
+        return True
+    async with AsyncSessionLocal() as session:
+        verified = await is_phone_verified(session, user_id)
+    if not verified:
+        await _prompt_phone_share(message)
+        return False
+    return True
+
+
 # ─────────────── Wallet helpers ───────────────
 
 
@@ -126,12 +193,21 @@ def crystals_for(tokens: int) -> int:
 async def cmd_start(message: Message) -> None:
     """Show the welcome screen with role, balance, and command list."""
     user_id = tg_user_id(message)
-    is_admin = user_id == ADMIN_USER_ID
+    is_admin = _is_admin(user_id)
     balance = await get_balance(user_id)
+    async with AsyncSessionLocal() as session:
+        verified = await is_phone_verified(session, user_id)
+
     role = "👑 المالك" if is_admin else "مستخدم"
+    verified_line = (
+        "✅ رقمك موثّق"
+        if verified or is_admin
+        else "🔒 لم يتم التحقّق بعد — أرسل أي رسالة لبدء التحقّق"
+    )
     await message.answer(
         "🤖 <b>Builder Agent</b> — مساعدك للبرمجة المستقلّة\n\n"
         f"الدور: {role}\n"
+        f"الحالة: {verified_line}\n"
         f"الرصيد: <b>{balance}</b> كرستالة\n"
         f"التكلفة: 1 كرستالة لكل {TOKENS_PER_CRYSTAL} توكن"
         + (" (معفى)" if is_admin else "")
@@ -140,7 +216,8 @@ async def cmd_start(message: Message) -> None:
         "<b>أوامر:</b>\n"
         "/balance — رصيدك الحالي\n"
         "/reset — مسح الذاكرة + sandbox\n"
-        "/stats — إحصائيات جلستك\n\n"
+        "/stats — إحصائيات جلستك\n"
+        "/unlink_phone — حذف رقمك من المنصّة\n\n"
         "<i>Powered by @iLildev</i>",
         parse_mode="HTML",
     )
@@ -177,14 +254,79 @@ async def cmd_stats(message: Message) -> None:
     )
 
 
+@router.message(Command("unlink_phone"))
+async def cmd_unlink_phone(message: Message) -> None:
+    """Wipe the user's verified phone (GDPR-style "delete my data")."""
+    user_id = tg_user_id(message)
+    async with AsyncSessionLocal() as session:
+        cleared = await unlink_phone(session, user_id, source="user_command")
+    if cleared:
+        fire("phone_unlinked", {"user_id": user_id})
+        await message.answer(
+            "🗑️ تم حذف رقمك من المنصّة. ستحتاج إلى التحقّق مجدّداً قبل الاستخدام المتقدّم.",
+            reply_markup=ReplyKeyboardRemove(),
+        )
+    else:
+        await message.answer("ℹ️ لا يوجد رقم مسجّل لحسابك.")
+
+
+# ─────────────── Contact handler ───────────────
+
+
+@router.message(F.contact)
+async def on_contact(message: Message) -> None:
+    """Handle the contact-share that completes phone verification."""
+    contact = message.contact
+    # Telegram's request_contact button always returns the sender's own
+    # contact, with `user_id` set. Reject manually-forwarded cards.
+    if contact is None or contact.user_id != message.from_user.id:
+        await message.answer(
+            "⚠️ يجب مشاركة رقمك أنت، لا رقم شخص آخر. "
+            "اضغط زرّ المشاركة بدلاً من إرسال جهة اتصال يدوياً."
+        )
+        return
+
+    user_id = tg_user_id(message)
+    try:
+        async with AsyncSessionLocal() as session:
+            await record_phone_verification(
+                session,
+                user_id,
+                contact.phone_number,
+                source="telegram_contact",
+                ip_hash=None,
+            )
+    except PhoneError as exc:
+        await message.answer(
+            f"❌ تعذّر التحقّق: {exc}\n\nإن كنت قد سجّلت بحساب آخر، استخدم /unlink_phone هناك أوّلاً."
+        )
+        return
+    except Exception as exc:  # noqa: BLE001
+        log.exception("phone verification failed for %s", user_id)
+        await message.answer(f"❌ خطأ داخلي أثناء التحقّق: {type(exc).__name__}")
+        return
+
+    fire("phone_verified", {"user_id": user_id, "source": "builder_bot"})
+    await message.answer(
+        "✅ <b>تم التحقّق بنجاح</b>\n\n"
+        "يمكنك الآن استخدام Builder Agent. أرسل طلبك متى شئت.",
+        parse_mode="HTML",
+        reply_markup=ReplyKeyboardRemove(),
+    )
+
+
 # ─────────────── Main message handler ───────────────
 
 
 @router.message(F.text)
 async def on_message(message: Message) -> None:
     """Run a single agent turn for the user's free-form text message."""
+    # Phase 0 gate: phone verification before any agent turn.
+    if not await _ensure_verified(message):
+        return
+
     user_id = tg_user_id(message)
-    is_admin = user_id == ADMIN_USER_ID
+    is_admin = _is_admin(user_id)
 
     # Pre-flight balance check (admins exempt).
     if not is_admin:
@@ -274,9 +416,10 @@ async def main() -> None:
     dp = Dispatcher()
     dp.include_router(router)
     log.info(
-        "Builder Bot starting (admin=%s, rate=%s tok/crystal)",
+        "Builder Bot starting (admin=%s, rate=%s tok/crystal, phone_gate=%s)",
         ADMIN_USER_ID or "none",
         TOKENS_PER_CRYSTAL,
+        settings.REQUIRE_PHONE_VERIFICATION,
     )
     await dp.start_polling(bot, handle_signals=False)
 

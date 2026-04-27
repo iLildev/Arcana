@@ -21,6 +21,14 @@ from zerobot.database.models import Bot, User, Wallet
 from zerobot.database.port_registry import Port
 from zerobot.database.wallet import WalletService
 from zerobot.events.publisher import fire
+from zerobot.identity import (
+    QuotaError,
+    check_bot_quota,
+    is_linked,
+    revoke_session,
+    set_bot_quota,
+    unlink_phone,
+)
 from zerobot.isolation.venv_manager import VenvManager
 
 app = FastAPI(title="ZeroBot Admin Console")
@@ -77,6 +85,8 @@ class UserOut(BaseModel):
     bot_count: int
     balance: int
     created_at: str | None
+    phone_verified: bool = False
+    bot_quota: int | None = None
 
 
 class UserDetailOut(BaseModel):
@@ -87,6 +97,28 @@ class UserDetailOut(BaseModel):
     balance: int
     bots: list[BotOut]
     created_at: str | None
+    phone_verified: bool = False
+    phone_verified_at: str | None = None
+    bot_quota: int | None = None
+    telegram_session_linked: bool = False
+
+
+class IdentityOut(BaseModel):
+    """Identity / quota snapshot for ``GET /admin/users/{id}/identity``."""
+
+    user_id: str
+    phone_verified: bool
+    phone_verified_at: str | None
+    bot_quota: int
+    bot_count: int
+    bot_quota_remaining: int
+    telegram_session_linked: bool
+
+
+class QuotaIn(BaseModel):
+    """Request body for ``POST /admin/users/{id}/quota``."""
+
+    quota: int
 
 
 class WalletOut(BaseModel):
@@ -239,6 +271,8 @@ async def list_users(session: AsyncSession = Depends(get_session)):
                 bot_count=bot_count,
                 balance=wallet.balance,
                 created_at=u.created_at.isoformat() if u.created_at else None,
+                phone_verified=u.phone_verified_at is not None,
+                bot_quota=u.bot_quota,
             )
         )
     return out
@@ -253,6 +287,7 @@ async def get_user(user_id: str, session: AsyncSession = Depends(get_session)):
 
     bots = (await session.execute(select(Bot).where(Bot.user_id == user_id))).scalars().all()
     wallet = await WalletService(session).get_wallet(user_id)
+    linked = await is_linked(session, user_id)
 
     return UserDetailOut(
         id=user.id,
@@ -260,6 +295,102 @@ async def get_user(user_id: str, session: AsyncSession = Depends(get_session)):
         balance=wallet.balance,
         bots=[_bot_out(b) for b in bots],
         created_at=user.created_at.isoformat() if user.created_at else None,
+        phone_verified=user.phone_verified_at is not None,
+        phone_verified_at=(
+            user.phone_verified_at.isoformat() if user.phone_verified_at else None
+        ),
+        bot_quota=user.bot_quota,
+        telegram_session_linked=linked,
+    )
+
+
+# ── Identity admin (Phase 0) ─────────────────────────────────────────────
+
+
+@app.get(
+    "/admin/users/{user_id}/identity",
+    response_model=IdentityOut,
+    dependencies=[AdminGuard],
+)
+async def get_user_identity(
+    user_id: str, session: AsyncSession = Depends(get_session)
+):
+    """Return the user's verification, quota, and Telegram-link snapshot."""
+    user = await session.get(User, user_id)
+    if not user:
+        raise HTTPException(404, "User not found")
+    quota = await check_bot_quota(session, user_id)
+    linked = await is_linked(session, user_id)
+    return IdentityOut(
+        user_id=user.id,
+        phone_verified=user.phone_verified_at is not None,
+        phone_verified_at=(
+            user.phone_verified_at.isoformat() if user.phone_verified_at else None
+        ),
+        bot_quota=quota.quota,
+        bot_count=quota.current,
+        bot_quota_remaining=quota.remaining,
+        telegram_session_linked=linked,
+    )
+
+
+@app.post(
+    "/admin/users/{user_id}/identity/unverify",
+    dependencies=[AdminGuard],
+)
+async def admin_unverify_phone(
+    user_id: str, session: AsyncSession = Depends(get_session)
+):
+    """Force-clear a user's phone verification (admin override)."""
+    cleared = await unlink_phone(session, user_id, source="admin_override")
+    if cleared:
+        fire("phone_unlinked", {"user_id": user_id, "source": "admin_override"})
+    return {"cleared": cleared}
+
+
+@app.post(
+    "/admin/users/{user_id}/identity/unlink_session",
+    dependencies=[AdminGuard],
+)
+async def admin_unlink_session(
+    user_id: str, session: AsyncSession = Depends(get_session)
+):
+    """Revoke a user's stored MTProto session (admin override)."""
+    revoked = await revoke_session(session, user_id)
+    if revoked:
+        fire("telegram_session_revoked", {"user_id": user_id, "source": "admin_override"})
+    return {"revoked": revoked}
+
+
+@app.post(
+    "/admin/users/{user_id}/quota",
+    response_model=IdentityOut,
+    dependencies=[AdminGuard],
+)
+async def admin_set_quota(
+    user_id: str, body: QuotaIn, session: AsyncSession = Depends(get_session)
+):
+    """Override the bot quota for *user_id*."""
+    user = await session.get(User, user_id)
+    if not user:
+        raise HTTPException(404, "User not found")
+    try:
+        await set_bot_quota(session, user_id, body.quota)
+    except QuotaError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    quota = await check_bot_quota(session, user_id)
+    linked = await is_linked(session, user_id)
+    fire("bot_quota_changed", {"user_id": user_id, "quota": body.quota})
+    return IdentityOut(
+        user_id=user.id,
+        phone_verified=user.phone_verified_at is not None,
+        phone_verified_at=(
+            user.phone_verified_at.isoformat() if user.phone_verified_at else None
+        ),
+        bot_quota=quota.quota,
+        bot_count=quota.current,
+        bot_quota_remaining=quota.remaining,
+        telegram_session_linked=linked,
     )
 
 

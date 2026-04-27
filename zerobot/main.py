@@ -29,10 +29,22 @@ from zerobot.database.port_registry import Port
 # PostgreSQL's `ADD COLUMN IF NOT EXISTS` is non-destructive and skips
 # columns that already exist. Primary keys are never touched.
 ADDITIVE_MIGRATIONS = [
-    "ALTER TABLE bots  ADD COLUMN IF NOT EXISTS is_official BOOLEAN DEFAULT FALSE",
-    "ALTER TABLE bots  ADD COLUMN IF NOT EXISTS name        VARCHAR",
-    "ALTER TABLE bots  ADD COLUMN IF NOT EXISTS description VARCHAR",
-    "ALTER TABLE users ADD COLUMN IF NOT EXISTS is_admin    BOOLEAN DEFAULT FALSE",
+    "ALTER TABLE bots  ADD COLUMN IF NOT EXISTS is_official       BOOLEAN DEFAULT FALSE",
+    "ALTER TABLE bots  ADD COLUMN IF NOT EXISTS name              VARCHAR",
+    "ALTER TABLE bots  ADD COLUMN IF NOT EXISTS description       VARCHAR",
+    "ALTER TABLE users ADD COLUMN IF NOT EXISTS is_admin          BOOLEAN DEFAULT FALSE",
+    # ── Phase 0 (identity) ───────────────────────────────────────────────
+    "ALTER TABLE users ADD COLUMN IF NOT EXISTS phone_encrypted   BYTEA",
+    "ALTER TABLE users ADD COLUMN IF NOT EXISTS phone_hash        VARCHAR(64)",
+    "ALTER TABLE users ADD COLUMN IF NOT EXISTS phone_verified_at TIMESTAMP",
+    "ALTER TABLE users ADD COLUMN IF NOT EXISTS bot_quota         INTEGER",
+    # Unique index on phone_hash (skipped if already present). The
+    # WHERE-clause makes it a "partial unique" so multiple unverified
+    # users (NULL hash) coexist without colliding.
+    (
+        "CREATE UNIQUE INDEX IF NOT EXISTS ux_users_phone_hash "
+        "ON users (phone_hash) WHERE phone_hash IS NOT NULL"
+    ),
 ]
 
 

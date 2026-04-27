@@ -50,6 +50,20 @@ class Settings(BaseSettings):
     SANDBOX_FILE_MB: int = 50  # max single-file size written by sandbox
     SANDBOX_MAX_PROCS: int = 64  # max concurrent processes per sandbox call
 
+    # ── Identity (Phase 0) ────────────────────────────────────────────────
+    # Base64-encoded 32-byte AES-256 master key for at-rest encryption of
+    # phone numbers and MTProto sessions. Falls back to a deterministic
+    # dev key (with a loud warning) when unset.
+    MASTER_ENCRYPTION_KEY: str = ""
+    # Base64-encoded HMAC key used to dedupe phone numbers without
+    # decrypting them. Same fallback policy as MASTER_ENCRYPTION_KEY.
+    PHONE_HMAC_KEY: str = ""
+    # How many bots a verified user may plant for free.
+    FREE_BOT_QUOTA: int = 3
+    # When True, the platform refuses to create bots / run agent turns
+    # for users who haven't shared a phone via Telegram contact.
+    REQUIRE_PHONE_VERIFICATION: bool = True
+
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     @field_validator("DATABASE_URL")

@@ -62,7 +62,33 @@ and their descriptions. Secrets that must never be committed:
 - `ADMIN_TOKEN`
 - `BUILDER_BOT_TOKEN`, `MANAGER_BOT_TOKEN`
 - `AI_INTEGRATIONS_ANTHROPIC_*`
+- `MASTER_ENCRYPTION_KEY`, `PHONE_HMAC_KEY` (Phase 0 identity layer)
 - `DATABASE_URL` (when it contains a real password)
+
+## Phase 0 — Identity layer (built April 2026)
+
+The platform now enforces a Telegram phone-verification gate before any
+bot is created or any Builder Agent turn is run (admins are exempt; can
+be globally disabled via `REQUIRE_PHONE_VERIFICATION=false` for tests).
+
+- **`zerobot/security/`** — versioned AES-GCM envelopes (with AAD) and
+  HMAC helpers. Master keys resolved from env, with a deterministic dev
+  fallback and loud warning when unset.
+- **`zerobot/identity/`** — phone normalization (E.164), HMAC-based dedup,
+  bot-quota check (default 3 per phone), and encrypted MTProto session
+  storage (substrate for Phase 1 BotFather automation).
+- **DB additions** — `User` gained `phone_encrypted` (BYTEA),
+  `phone_hash` (unique partial index), `phone_verified_at`, `bot_quota`.
+  New tables: `bot_owner_sessions`, `phone_verification_log`,
+  `botfather_operations`. Columns added via `ADDITIVE_MIGRATIONS` so
+  existing deployments upgrade cleanly.
+- **Builder Bot** — `request_contact` keyboard on first use; `/unlink_phone`
+  for GDPR-style deletion.
+- **User Console** — `POST /users/{id}/bots` returns HTTP 403 with
+  `phone_verification_required` or `bot_quota_exceeded` when the gates
+  fail.
+- **Admin Console + Manager Bot** — `/identity`, `/unverify`,
+  `/unlink_session`, `/setquota` admin overrides.
 
 ## Notes
 

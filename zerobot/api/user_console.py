@@ -11,11 +11,13 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from zerobot.config import settings
 from zerobot.core.orchestrator import Orchestrator
 from zerobot.database.engine import async_session_maker
 from zerobot.database.models import Bot, User
 from zerobot.database.wallet import WalletService
 from zerobot.events.publisher import fire
+from zerobot.identity import check_bot_quota, is_phone_verified
 
 app = FastAPI(title="ZeroBot User Console")
 
@@ -160,12 +162,44 @@ async def create_bot(
     body: CreateBotIn,
     session: AsyncSession = Depends(get_session),
 ):
-    """Plant a new bot for *user_id*. Charges 1 crystal on success."""
+    """Plant a new bot for *user_id*. Charges 1 crystal on success.
+
+    Phase 0 enforces:
+    - the user must have a verified phone (unless admin or
+      ``REQUIRE_PHONE_VERIFICATION`` is disabled);
+    - the user must be under their per-user bot quota.
+    """
     user = await session.get(User, user_id)
     if not user:
         session.add(User(id=user_id))
         await session.commit()
         fire("user_registered", {"user_id": user_id, "source": "create_bot"})
+        user = await session.get(User, user_id)
+
+    # ── Phase 0 gates ────────────────────────────────────────────────────
+    if (
+        settings.REQUIRE_PHONE_VERIFICATION
+        and not (user and user.is_admin)
+        and not await is_phone_verified(session, user_id)
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                "phone_verification_required: share your phone via Telegram "
+                "before creating a bot"
+            ),
+        )
+
+    if not (user and user.is_admin):
+        quota = await check_bot_quota(session, user_id)
+        if not quota.allowed:
+            raise HTTPException(
+                status_code=403,
+                detail=(
+                    f"bot_quota_exceeded: {quota.current}/{quota.quota} bots used. "
+                    "Upgrade or ask an admin for more."
+                ),
+            )
 
     existing = await session.get(Bot, body.bot_id)
     if existing:

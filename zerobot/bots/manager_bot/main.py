@@ -126,6 +126,11 @@ async def cmd_start(m: Message):
         "/grant <code>&lt;user&gt; &lt;amt&gt;</code>\n"
         "/deduct <code>&lt;user&gt; &lt;amt&gt;</code>\n"
         "/promote <code>&lt;user&gt;</code> · /demote <code>&lt;user&gt;</code>\n\n"
+        "<b>Identity:</b>\n"
+        "/identity <code>&lt;user&gt;</code> — verification + quota status\n"
+        "/unverify <code>&lt;user&gt;</code> — clear phone\n"
+        "/unlink_session <code>&lt;user&gt;</code> — revoke MTProto link\n"
+        "/setquota <code>&lt;user&gt; &lt;n&gt;</code> — override bot quota\n\n"
         "<b>Bots:</b>\n"
         "/bots — list all bots\n"
         "/bot <code>&lt;id&gt;</code> — bot details\n"
@@ -201,7 +206,7 @@ async def cmd_users(m: Message):
 
 @router.message(Command("user"), admin_only)
 async def cmd_user(m: Message, command: CommandObject):
-    """Show full details for one user."""
+    """Show full details for one user (incl. identity status)."""
     args = _split_args(command, 1)
     if not args:
         await m.answer("Usage: <code>/user &lt;user_id&gt;</code>")
@@ -224,11 +229,98 @@ async def cmd_user(m: Message, command: CommandObject):
         or "  (no bots)"
     )
 
+    phone_status = "✅" if u.get("phone_verified") else "❌"
+    session_status = "🔗" if u.get("telegram_session_linked") else "—"
+    quota_text = u.get("bot_quota") if u.get("bot_quota") is not None else "default"
+
     await m.answer(
         f"👤 <b>User</b> <code>{u['id']}</code>{' 👑' if u['is_admin'] else ''}\n"
         f"💎 Balance: <b>{u['balance']}</b>\n"
+        f"📱 Phone: {phone_status}  ·  🔌 MTProto: {session_status}  ·  "
+        f"🎫 Quota: <b>{quota_text}</b>\n"
         f"📅 Created: {u['created_at']}\n\n"
         f"<b>Bots:</b>\n{bots_text}" + FOOTER
+    )
+
+
+# ─────────────── Identity admin commands (Phase 0) ───────────────
+
+
+@router.message(Command("identity"), admin_only)
+async def cmd_identity(m: Message, command: CommandObject):
+    """Show identity / quota snapshot for a user."""
+    args = _split_args(command, 1)
+    if not args:
+        await m.answer("Usage: <code>/identity &lt;user_id&gt;</code>")
+        return
+    r = await admin_http.get(f"/admin/users/{args[0]}/identity")
+    if r.status_code != 200:
+        await m.answer(await _api_error_text(r))
+        return
+    d = r.json()
+    await m.answer(
+        f"🆔 <b>Identity</b> <code>{d['user_id']}</code>\n"
+        f"📱 Phone: {'✅ verified ' + (d.get('phone_verified_at') or '') if d['phone_verified'] else '❌ not verified'}\n"
+        f"🔌 MTProto session: {'🔗 linked' if d['telegram_session_linked'] else '— not linked'}\n"
+        f"🎫 Bots: <b>{d['bot_count']}</b> / {d['bot_quota']} "
+        f"(remaining {d['bot_quota_remaining']})" + FOOTER
+    )
+
+
+@router.message(Command("unverify"), admin_only)
+async def cmd_unverify(m: Message, command: CommandObject):
+    """Force-clear a user's phone verification (admin override)."""
+    args = _split_args(command, 1)
+    if not args:
+        await m.answer("Usage: <code>/unverify &lt;user_id&gt;</code>")
+        return
+    r = await admin_http.post(f"/admin/users/{args[0]}/identity/unverify")
+    if r.status_code != 200:
+        await m.answer(await _api_error_text(r))
+        return
+    d = r.json()
+    if d.get("cleared"):
+        await m.answer(f"🗑️ Phone unverified for <code>{args[0]}</code>" + FOOTER)
+    else:
+        await m.answer(f"ℹ️ <code>{args[0]}</code> had no phone on file" + FOOTER)
+
+
+@router.message(Command("unlink_session"), admin_only)
+async def cmd_unlink_session(m: Message, command: CommandObject):
+    """Revoke a user's stored MTProto session (admin override)."""
+    args = _split_args(command, 1)
+    if not args:
+        await m.answer("Usage: <code>/unlink_session &lt;user_id&gt;</code>")
+        return
+    r = await admin_http.post(f"/admin/users/{args[0]}/identity/unlink_session")
+    if r.status_code != 200:
+        await m.answer(await _api_error_text(r))
+        return
+    d = r.json()
+    if d.get("revoked"):
+        await m.answer(f"🔌 MTProto session revoked for <code>{args[0]}</code>" + FOOTER)
+    else:
+        await m.answer(f"ℹ️ <code>{args[0]}</code> had no active session" + FOOTER)
+
+
+@router.message(Command("setquota"), admin_only)
+async def cmd_setquota(m: Message, command: CommandObject):
+    """Override the bot quota for a user."""
+    args = _split_args(command, 2)
+    if not args or not args[1].isdigit():
+        await m.answer("Usage: <code>/setquota &lt;user_id&gt; &lt;n&gt;</code>")
+        return
+    user_id, quota = args[0], int(args[1])
+    r = await admin_http.post(
+        f"/admin/users/{user_id}/quota", json={"quota": quota}
+    )
+    if r.status_code != 200:
+        await m.answer(await _api_error_text(r))
+        return
+    d = r.json()
+    await m.answer(
+        f"🎫 Quota set for <code>{user_id}</code> → "
+        f"<b>{d['bot_count']}</b> / {d['bot_quota']}" + FOOTER
     )
 
 
