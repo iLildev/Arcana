@@ -2,12 +2,13 @@
 
 import asyncio
 import socket
+import time
 from pathlib import Path
 
 
 async def wait_for_port(port: int, timeout: float = 5.0) -> bool:
     """Block until *port* on localhost accepts a connection or *timeout* expires."""
-    start = asyncio.get_event_loop().time()
+    deadline = time.monotonic() + timeout
 
     while True:
         try:
@@ -16,7 +17,7 @@ async def wait_for_port(port: int, timeout: float = 5.0) -> bool:
         except OSError:
             await asyncio.sleep(0.2)
 
-        if asyncio.get_event_loop().time() - start > timeout:
+        if time.monotonic() > deadline:
             raise TimeoutError(f"Bot on port {port} did not start in time")
 
 

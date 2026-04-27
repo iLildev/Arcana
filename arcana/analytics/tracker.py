@@ -26,6 +26,5 @@ class Tracker:
             f"📊 Bot Stats\n"
             f"Messages: {count}\n"
             f"Uptime: {uptime}s\n"
-            f"Load: [{bar}]\n"
-            f"\nPowered by @iLildev"
+            f"Load: [{bar}]"
         )

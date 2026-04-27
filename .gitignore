@@ -1,71 +1,63 @@
-# See https://docs.github.com/en/get-started/getting-started-with-git/ignoring-files for more about ignoring files.
+# See https://docs.github.com/en/get-started/getting-started-with-git/ignoring-files
 
-# compiled output
-dist
-tmp
-out-tsc
-*.tsbuildinfo
-.expo
-.expo-shared
-
-# dependencies
-node_modules
-
-# IDEs and editors
-/.idea
-.project
-.classpath
-.c9/
-*.launch
-.settings/
-*.sublime-workspace
-
-# IDE - VSCode
-.vscode/*
-!.vscode/settings.json
-!.vscode/tasks.json
-!.vscode/launch.json
-!.vscode/extensions.json
-
-# misc
-/.sass-cache
-/connect.lock
-/coverage
-/libpeerconnection.log
-npm-debug.log
-yarn-error.log
-testem.log
-/typings
-
-# System Files
-.DS_Store
-Thumbs.db
-
-.cursor/rules/nx-rules.mdc
-.github/instructions/nx.instructions.md
-
-# Replit
-.cache/
-.local/
-
-# Python
+# ── Python ──────────────────────────────────────────────────────────────
 __pycache__/
-*.pyc
-*.pyo
-.env
-.env.local
-.pythonlibs/
-.venv/
-venv/
+*.py[cod]
+*$py.class
 *.egg-info/
 build/
 dist/
+.eggs/
+*.so
+
+# Virtualenvs / installed packages
+.venv/
+venv/
+env/
+.pythonlibs/
+
+# Testing & linting caches
 .pytest_cache/
 .ruff_cache/
 .mypy_cache/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
 
-# Arcana — per-bot virtualenvs and Builder Agent sandbox workspaces
+# Build outputs
+*.egg
+pip-wheel-metadata/
+
+# ── Environment ─────────────────────────────────────────────────────────
+.env
+.env.local
+.env.*.local
+
+# ── Editors / IDEs ──────────────────────────────────────────────────────
+.idea/
+.vscode/
+*.swp
+*.swo
+*.sublime-workspace
+*.sublime-project
+.DS_Store
+Thumbs.db
+
+# ── Replit ──────────────────────────────────────────────────────────────
+.cache/
+.local/
+.upm/
+
+# ── Arcana runtime data ─────────────────────────────────────────────────
+# Per-bot virtualenvs and Builder Agent sandbox workspaces.
+runtime_envs/
 arcana/runtime_envs/*
 !arcana/runtime_envs/.gitkeep
-runtime_envs/
 
+# ── Node / pnpm leftovers (kept out of this Python project) ────────────
+node_modules/
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+*.tsbuildinfo

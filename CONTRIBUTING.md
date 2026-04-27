@@ -68,9 +68,5 @@ Add /restart admin command to manager bot
 ## Reporting a security issue
 
 Please **do not** open a public issue for vulnerabilities. Email the
-maintainer (see `README.md` for the contact handle) and allow time for a
-fix before disclosure.
-
----
-
-Powered by @iLildev
+maintainer (see `SECURITY.md` for the disclosure process) and allow time
+for a fix before disclosure.

@@ -111,11 +111,11 @@ async def handle_update(bot_id: str, request: Request) -> dict:
             for upd in buffered_updates:
                 await delivery.forward(bot.port, upd)
 
-            return {"status": "woken up - Powered by @iLildev"}
+            return {"status": "woken", "delivered": len(buffered_updates)}
 
         # Throttle hot bots.
         if not limiter.allow(bot_id):
-            return {"error": "rate limited - Powered by @iLildev"}
+            raise HTTPException(status_code=429, detail="rate limited")
 
         # Record activity for analytics + hibernation timer.
         tracker.track(bot_id)

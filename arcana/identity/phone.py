@@ -14,7 +14,7 @@ also writes an audit row to ``phone_verification_log``.
 from __future__ import annotations
 
 import re
-from datetime import datetime
+from datetime import UTC, datetime
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -98,7 +98,9 @@ async def record_phone_verification(
     cryptor = get_master_cryptor()
     user.phone_encrypted = cryptor.encrypt_str(phone_e164, aad=user_id.encode("utf-8"))
     user.phone_hash = h
-    user.phone_verified_at = datetime.utcnow()  # noqa: DTZ003 - SQLA stores naive UTC
+    # SQLAlchemy DateTime columns store naive UTC, so we drop the tzinfo
+    # after fetching the canonical UTC instant.
+    user.phone_verified_at = datetime.now(UTC).replace(tzinfo=None)
 
     session.add(
         PhoneVerificationLog(

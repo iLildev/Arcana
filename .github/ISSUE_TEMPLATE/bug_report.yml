@@ -1,0 +1,84 @@
+name: Bug report
+description: Report a reproducible bug in Arcana.
+title: "[bug] "
+labels: ["bug", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for filing a bug! A clear, reproducible report makes it
+        much easier to ship a fix. Please **do not** include real bot
+        tokens, phone numbers, or other secrets — redact them first.
+
+  - type: textarea
+    id: summary
+    attributes:
+      label: What happened?
+      description: A clear, concise description of the bug.
+      placeholder: When I do X, I see Y, but I expected Z.
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: Minimal sequence that triggers the bug.
+      placeholder: |
+        1. Start the gateway with `uvicorn arcana.core.gateway:app …`
+        2. POST `…` to `/webhook/<bot_id>`
+        3. Observe `…`
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs / tracebacks
+      description: Paste tracebacks or service logs (with secrets redacted).
+      render: shell
+
+  - type: input
+    id: arcana-version
+    attributes:
+      label: Arcana version / commit
+      placeholder: e.g. 0.1.0 or commit sha
+    validations:
+      required: true
+
+  - type: input
+    id: python-version
+    attributes:
+      label: Python version
+      placeholder: "e.g. 3.11.9"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: deployment
+    attributes:
+      label: How are you running it?
+      options:
+        - Local (uvicorn directly)
+        - docker compose
+        - Custom Docker / Kubernetes
+        - Other
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: terms
+    attributes:
+      label: Pre-submission checklist
+      options:
+        - label: I searched existing issues and this is not a duplicate.
+          required: true
+        - label: I redacted all bot tokens, secrets, and personal data from logs.
+          required: true

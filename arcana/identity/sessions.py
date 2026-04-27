@@ -14,7 +14,7 @@ Why we encrypt with AAD = user_id:
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import NamedTuple
 
 from sqlalchemy import select
@@ -22,6 +22,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from arcana.database.models import BotOwnerSession
 from arcana.security.keys import get_master_cryptor
+
+
+def _utc_naive() -> datetime:
+    """Return the current UTC instant as a naive datetime (SQLAlchemy column type)."""
+    return datetime.now(UTC).replace(tzinfo=None)
 
 
 class SessionLinkError(Exception):
@@ -60,7 +65,7 @@ async def store_session(
         )
     )
     if existing is not None:
-        existing.revoked_at = datetime.utcnow()  # noqa: DTZ003
+        existing.revoked_at = _utc_naive()
 
     cryptor = get_master_cryptor()
     encrypted = cryptor.encrypt_str(session_string, aad=user_id.encode("utf-8"))
@@ -94,7 +99,7 @@ async def unwrap_session(session: AsyncSession, user_id: str) -> LinkedSession |
         raise SessionLinkError(f"failed to decrypt session for {user_id}: {exc}") from exc
 
     # Touch last_used_at on every successful unwrap (cheap, useful for audit).
-    row.last_used_at = datetime.utcnow()  # noqa: DTZ003
+    row.last_used_at = _utc_naive()
     await session.commit()
 
     return LinkedSession(
@@ -118,7 +123,7 @@ async def revoke_session(
     )
     if row is None:
         return False
-    row.revoked_at = datetime.utcnow()  # noqa: DTZ003
+    row.revoked_at = _utc_naive()
     await session.commit()
     return True
 

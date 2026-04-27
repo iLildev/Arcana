@@ -88,7 +88,8 @@ admin_only = AdminFilter()
 
 # ─────────────── Helpers ───────────────
 
-FOOTER = "\n\n<i>Powered by @iLildev</i>"
+_RAW_FOOTER = os.getenv("MANAGER_BOT_FOOTER", "").strip()
+FOOTER = f"\n\n<i>{_RAW_FOOTER}</i>" if _RAW_FOOTER else ""
 
 
 def _split_args(command: CommandObject, n: int) -> list[str] | None:

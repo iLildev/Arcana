@@ -68,7 +68,7 @@ from arcana.config import settings
 from arcana.database.engine import AsyncSessionLocal
 from arcana.database.models import Bot as BotModel
 from arcana.database.models import User
-from arcana.database.wallet import WalletService
+from arcana.database.wallet import InsufficientCrystalsError, WalletService
 from arcana.events.publisher import fire
 from arcana.identity import (
     PhoneError,
@@ -239,13 +239,35 @@ async def get_balance(user_id: str) -> int:
 
 
 async def charge(user_id: str, amount: int) -> int:
-    """Deduct *amount* crystals; returns new balance. Caps at zero on shortfall."""
+    """Deduct *amount* crystals from *user_id*; return the new balance.
+
+    The Builder Agent has already consumed billable LLM tokens by the time
+    we get here, so refusing to charge would simply socialize the cost.
+    Instead, we delegate to :class:`WalletService` (the canonical mutator)
+    when the wallet can cover the full amount; on shortfall we drain to
+    zero and emit a structured warning so operators can spot under-billing.
+    """
+    if amount <= 0:
+        return await get_balance(user_id)
+
     async with AsyncSessionLocal() as session:
         service = WalletService(session)
+        try:
+            await service.charge(user_id, amount)
+        except InsufficientCrystalsError as exc:
+            wallet = await service.get_wallet(user_id)
+            shortfall = exc.requested - exc.available
+            if wallet.balance > 0:
+                wallet.balance = 0
+                await session.commit()
+            log.warning(
+                "wallet shortfall: user=%s requested=%d available=%d shortfall=%d",
+                user_id,
+                exc.requested,
+                exc.available,
+                shortfall,
+            )
         wallet = await service.get_wallet(user_id)
-        deducted = min(amount, wallet.balance)
-        wallet.balance -= deducted
-        await session.commit()
         return wallet.balance
 
 

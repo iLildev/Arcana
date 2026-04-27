@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security disclosure
+    url: https://github.com/iLildev/arcana/security/advisories/new
+    about: Report a security vulnerability privately. Do NOT open a public issue.
+  - name: Documentation
+    url: https://github.com/iLildev/arcana#readme
+    about: README, architecture, and quick-start guide.
