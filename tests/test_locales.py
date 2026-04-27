@@ -68,8 +68,27 @@ def test_t_swallows_missing_placeholders_gracefully() -> None:
 
 def test_help_full_includes_core_commands_in_every_language() -> None:
     """The user guide must mention every command we route on."""
-    required = ["/start", "/help", "/balance", "/reset", "/lang", "/mybots"]
+    required = [
+        "/start",
+        "/help",
+        "/balance",
+        "/reset",
+        "/lang",
+        "/mybots",
+        "/import",
+    ]
     for lang in LANGUAGES:
         text = t("help_full", lang)
         for cmd in required:
             assert cmd in text, f"/{cmd!r} missing from help_full[{lang!r}]"
+
+
+def test_default_language_is_english() -> None:
+    """English is the platform's primary language; other locales remain supported."""
+    assert DEFAULT_LANG == "en"
+
+
+def test_normalize_lang_falls_back_to_english_for_unknown_codes() -> None:
+    """Sanity check: switching the default away from Arabic must reach this helper."""
+    assert normalize_lang("zz") == "en"
+    assert normalize_lang(None) == "en"

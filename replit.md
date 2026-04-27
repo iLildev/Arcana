@@ -133,6 +133,34 @@ ship in a follow-up phase that needs an MTProto user session.
   ownership enforcement, partial updates, audit logging, and
   per-field failure recording.
 
+## Phase 1.د — GitHub / GitLab project import (April 2026)
+
+Users can now import an existing public repository straight into their
+sandboxed workspace and have the Builder Agent describe it.
+
+- **`arcana/agents/tools.py`** — new `git_clone` tool exposed to Claude.
+  URLs are validated locally (`parse_git_url`): only `https://github.com/`
+  and `https://gitlab.com/` hosts are accepted; query strings, fragments,
+  credentials, and traversal segments (`..`) are rejected before any
+  subprocess runs. Clones are shallow (`--depth=1`), single-branch when
+  a `ref` is supplied, and run through the existing sandbox bash with
+  its rlimit caps.
+- **Builder Bot** — new `/import <url>` command. The URL is validated,
+  the user gets a localized "cloning…" acknowledgement, and a synthetic
+  agent prompt is dispatched through the normal text path so billing,
+  per-user locking, and progress edits are unchanged.
+- **Locales** — five new keys (`import_usage`, `import_invalid_url`,
+  `import_started`) translated into all six supported languages, plus an
+  "Import an existing project" section added to `help_full` per locale.
+- **Default language** flipped from Arabic to **English**. Arabic remains
+  fully first-class — users can switch any time with `/lang`. The
+  decision is reflected in `tests/test_locales.py`
+  (`test_default_language_is_english`).
+- **Tests** — `tests/test_git_import.py` (10 tests) covers URL validation
+  (parametrized happy + sad paths), shell-meta rejection in `ref`, dest
+  collision detection, and the dispatcher's success / failure framing.
+  Existing locale tests guarantee every language has the new keys.
+
 ## Documentation conventions
 
 - **English** is the default language for code, docstrings, and module

@@ -55,6 +55,7 @@ from aiogram.types import (
 from sqlalchemy import select as sa_select
 
 from arcana.agents.builder_agent import BuilderAgent
+from arcana.agents.tools import GitImportError, parse_git_url
 from arcana.botfather import (
     BotFatherError,
     fetch_bot_profile,
@@ -67,7 +68,6 @@ from arcana.bots.builder_bot.locales import (
     t,
 )
 from arcana.bots.middleware import (
-    DBSessionMiddleware,
     ThrottlingMiddleware,
     build_error_router,
     throttle,
@@ -837,6 +837,57 @@ async def cmd_broadcast(message: Message) -> None:
 
 
 # ─────────────── Main message handler ───────────────
+
+
+@router.message(Command("import"))
+async def cmd_import(message: Message) -> None:
+    """Clone a public GitHub or GitLab repo and ask the agent to analyze it.
+
+    Usage:
+        /import https://github.com/owner/repo
+        /import https://gitlab.com/group/subgroup/repo
+
+    The URL is validated locally first (we refuse anything that isn't a
+    GitHub/GitLab https URL) so a malformed link costs zero LLM tokens.
+    On success we hand the agent a self-describing prompt that tells it
+    exactly which tool call to make next.
+    """
+    lang = await _lang_for(message)
+    if not await _ensure_verified(message, lang):
+        return
+
+    args = _split_args(message, expected=1)
+    if not args or not args[0].strip():
+        await message.answer(t("import_usage", lang), parse_mode="HTML")
+        return
+
+    raw_url = args[0].strip()
+    try:
+        normalized_url, default_dir = parse_git_url(raw_url)
+    except GitImportError:
+        await message.answer(t("import_invalid_url", lang), parse_mode="HTML")
+        return
+
+    repo_label = normalized_url.removesuffix(".git")
+    await message.answer(
+        t("import_started", lang, repo=repo_label),
+        parse_mode="HTML",
+    )
+
+    # Synthesize a request for the agent: it already knows ``git_clone`` from
+    # its tool list, so a short, deterministic instruction is enough.
+    synthetic_prompt = (
+        f"The user wants to import the repository {normalized_url} into "
+        f"their workspace under the folder {default_dir!r}. "
+        "Use the git_clone tool with this URL (no ref), then briefly "
+        "summarize the repository: top-level layout, main entry point(s), "
+        "package manager / build system, and how to run it. "
+        "Reply in the user's language."
+    )
+    # Re-dispatch through the normal text handler so billing, locking,
+    # progress edits, and error handling are identical to a regular turn.
+    message.text = synthetic_prompt
+    await on_message(message)
 
 
 @router.message(F.text)

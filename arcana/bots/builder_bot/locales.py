@@ -34,7 +34,9 @@ LANGUAGES: dict[str, str] = {
 }
 
 # Default language used when the user has not picked one yet.
-DEFAULT_LANG: str = "ar"
+# English is the primary platform language; Arabic and the other locales
+# remain first-class — users can switch any time with /lang.
+DEFAULT_LANG: str = "en"
 
 
 def normalize_lang(code: str | None) -> str:
@@ -187,10 +189,13 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
             "/setname &lt;bot_id&gt; &lt;الاسم&gt; — تغيير اسم البوت\n"
             "/setdesc &lt;bot_id&gt; &lt;الوصف&gt; — تغيير الوصف الطويل\n"
             '/setabout &lt;bot_id&gt; &lt;النصّ&gt; — تغيير وصف "عن البوت"\n\n'
-            "<b>5. الخصوصيّة</b>\n"
+            "<b>5. استيراد مشروع جاهز</b>\n"
+            "/import &lt;رابط&gt; — استنساخ مشروع من GitHub أو GitLab "
+            "إلى مساحة عملك ثمّ تحليله تلقائياً.\n\n"
+            "<b>6. الخصوصيّة</b>\n"
             "نخزّن رقم هاتفك مشفّراً (AES-GCM) للتحقّق فقط. يمكنك حذفه بالكامل "
             "في أيّ وقت بالأمر /unlink_phone.\n\n"
-            "<b>6. نصائح للحصول على نتائج أفضل</b>\n"
+            "<b>7. نصائح للحصول على نتائج أفضل</b>\n"
             '• كن واضحاً ومحدّداً (مثلاً: "أنشئ أمر /price يعرض سعر BTC من '
             'Binance" أفضل من "أضف ميزة الأسعار").\n'
             "• قسّم الطلبات الكبيرة إلى خطوات.\n"
@@ -219,10 +224,13 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
             "/setname &lt;bot_id&gt; &lt;name&gt; — Rename the bot\n"
             "/setdesc &lt;bot_id&gt; &lt;text&gt; — Update long description\n"
             '/setabout &lt;bot_id&gt; &lt;text&gt; — Update the "About" line\n\n'
-            "<b>5. Privacy</b>\n"
+            "<b>5. Import an existing project</b>\n"
+            "/import &lt;url&gt; — Clone a public GitHub or GitLab repo "
+            "into your workspace and have me analyze it for you.\n\n"
+            "<b>6. Privacy</b>\n"
             "Your phone is stored encrypted (AES-GCM) and used only for "
             "verification. Delete it at any time with /unlink_phone.\n\n"
-            "<b>6. Tips for better results</b>\n"
+            "<b>7. Tips for better results</b>\n"
             '• Be specific (e.g. "add a /price command that fetches BTC from '
             'Binance" beats "add price feature").\n'
             "• Break large requests into smaller steps.\n"
@@ -251,11 +259,14 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
             "/setname &lt;bot_id&gt; &lt;nom&gt; — Renommer\n"
             "/setdesc &lt;bot_id&gt; &lt;texte&gt; — Description longue\n"
             "/setabout &lt;bot_id&gt; &lt;texte&gt; — Ligne « À propos »\n\n"
-            "<b>5. Vie privée</b>\n"
+            "<b>5. Importer un projet existant</b>\n"
+            "/import &lt;url&gt; — Cloner un dépôt public GitHub ou GitLab "
+            "dans votre espace puis le faire analyser.\n\n"
+            "<b>6. Vie privée</b>\n"
             "Votre numéro est stocké chiffré (AES-GCM) et utilisé uniquement "
             "pour la vérification. Supprimez-le à tout moment avec "
             "/unlink_phone.\n\n"
-            "<b>6. Astuces</b>\n"
+            "<b>7. Astuces</b>\n"
             "• Soyez précis (« ajoute /price qui récupère BTC sur Binance » "
             "vaut mieux que « ajoute une fonctionnalité prix »).\n"
             "• Découpez les grandes demandes.\n"
@@ -284,10 +295,13 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
             "/setname &lt;bot_id&gt; &lt;nombre&gt; — Renombrar\n"
             "/setdesc &lt;bot_id&gt; &lt;texto&gt; — Descripción larga\n"
             '/setabout &lt;bot_id&gt; &lt;texto&gt; — Línea "Acerca de"\n\n'
-            "<b>5. Privacidad</b>\n"
+            "<b>5. Importar un proyecto existente</b>\n"
+            "/import &lt;url&gt; — Clona un repo público de GitHub o GitLab "
+            "en tu workspace y haz que lo analice por ti.\n\n"
+            "<b>6. Privacidad</b>\n"
             "Tu número se guarda cifrado (AES-GCM) y se usa solo para "
             "verificación. Elimínalo en cualquier momento con /unlink_phone.\n\n"
-            "<b>6. Consejos</b>\n"
+            "<b>7. Consejos</b>\n"
             '• Sé específico ("añade /price que obtenga BTC de Binance" es '
             'mejor que "añade función de precios").\n'
             "• Divide peticiones grandes.\n"
@@ -316,10 +330,13 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
             "/setname &lt;bot_id&gt; &lt;имя&gt; — Переименовать\n"
             "/setdesc &lt;bot_id&gt; &lt;текст&gt; — Длинное описание\n"
             '/setabout &lt;bot_id&gt; &lt;текст&gt; — Строка "О боте"\n\n'
-            "<b>5. Приватность</b>\n"
+            "<b>5. Импорт готового проекта</b>\n"
+            "/import &lt;url&gt; — клонировать публичный репозиторий GitHub "
+            "или GitLab в рабочее пространство и попросить меня проанализировать его.\n\n"
+            "<b>6. Приватность</b>\n"
             "Ваш номер хранится в зашифрованном виде (AES-GCM) и используется "
             "только для проверки. Удалить его — /unlink_phone.\n\n"
-            "<b>6. Советы</b>\n"
+            "<b>7. Советы</b>\n"
             '• Будьте конкретны ("добавь /price, который берёт BTC с '
             'Binance" лучше, чем "добавь функцию цен").\n'
             "• Разбивайте крупные задачи на шаги.\n"
@@ -348,11 +365,14 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
             "/setname &lt;bot_id&gt; &lt;ad&gt; — Yeniden adlandır\n"
             "/setdesc &lt;bot_id&gt; &lt;metin&gt; — Uzun açıklama\n"
             '/setabout &lt;bot_id&gt; &lt;metin&gt; — "Hakkında" satırı\n\n'
-            "<b>5. Gizlilik</b>\n"
+            "<b>5. Mevcut bir projeyi içe aktar</b>\n"
+            "/import &lt;url&gt; — Herkese açık bir GitHub veya GitLab deposunu "
+            "çalışma alanınıza klonlayıp benim için analiz ettirin.\n\n"
+            "<b>6. Gizlilik</b>\n"
             "Telefon numaranız şifreli (AES-GCM) saklanır ve yalnızca "
             "doğrulama için kullanılır. Dilediğiniz zaman /unlink_phone ile "
             "silebilirsiniz.\n\n"
-            "<b>6. Daha iyi sonuçlar için ipuçları</b>\n"
+            "<b>7. Daha iyi sonuçlar için ipuçları</b>\n"
             '• Net olun ("Binance\'tan BTC fiyatı çeken /price komutu ekle" '
             'ifadesi "fiyat özelliği ekle"den daha iyidir).\n'
             "• Büyük istekleri parçalara bölün.\n"
@@ -831,6 +851,55 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "es": "⚠️ Ocurrió un error inesperado. Se notificó a los operadores.",
         "ru": "⚠️ Произошла непредвиденная ошибка. Операторы уведомлены.",
         "tr": "⚠️ Beklenmeyen bir hata oluştu. Operatörler bilgilendirildi.",
+    },
+    # ── /import (GitHub / GitLab repo import) ────────────────────────────
+    "import_usage": {
+        "ar": (
+            "الاستخدام: <code>/import &lt;رابط&gt;</code>\n"
+            "مثال: <code>/import https://github.com/user/repo</code>\n\n"
+            "تُقبل المستودعات العامّة من <b>GitHub</b> و <b>GitLab</b> فقط."
+        ),
+        "en": (
+            "Usage: <code>/import &lt;url&gt;</code>\n"
+            "Example: <code>/import https://github.com/user/repo</code>\n\n"
+            "Only public <b>GitHub</b> and <b>GitLab</b> repos are accepted."
+        ),
+        "fr": (
+            "Usage : <code>/import &lt;url&gt;</code>\n"
+            "Exemple : <code>/import https://github.com/user/repo</code>\n\n"
+            "Seuls les dépôts publics <b>GitHub</b> et <b>GitLab</b> sont acceptés."
+        ),
+        "es": (
+            "Uso: <code>/import &lt;url&gt;</code>\n"
+            "Ejemplo: <code>/import https://github.com/user/repo</code>\n\n"
+            "Solo se aceptan repos públicos de <b>GitHub</b> y <b>GitLab</b>."
+        ),
+        "ru": (
+            "Использование: <code>/import &lt;url&gt;</code>\n"
+            "Пример: <code>/import https://github.com/user/repo</code>\n\n"
+            "Принимаются только публичные репозитории <b>GitHub</b> и <b>GitLab</b>."
+        ),
+        "tr": (
+            "Kullanım: <code>/import &lt;url&gt;</code>\n"
+            "Örnek: <code>/import https://github.com/user/repo</code>\n\n"
+            "Yalnızca herkese açık <b>GitHub</b> ve <b>GitLab</b> depoları kabul edilir."
+        ),
+    },
+    "import_invalid_url": {
+        "ar": "❌ الرابط غير صالح. يجب أن يبدأ بـ <code>https://github.com/</code> أو <code>https://gitlab.com/</code>.",
+        "en": "❌ Invalid URL. It must start with <code>https://github.com/</code> or <code>https://gitlab.com/</code>.",
+        "fr": "❌ URL invalide. Elle doit commencer par <code>https://github.com/</code> ou <code>https://gitlab.com/</code>.",
+        "es": "❌ URL no válida. Debe comenzar por <code>https://github.com/</code> o <code>https://gitlab.com/</code>.",
+        "ru": "❌ Недопустимый URL. Должен начинаться с <code>https://github.com/</code> или <code>https://gitlab.com/</code>.",
+        "tr": "❌ Geçersiz URL. <code>https://github.com/</code> veya <code>https://gitlab.com/</code> ile başlamalı.",
+    },
+    "import_started": {
+        "ar": "📥 جاري استنساخ <code>{repo}</code> إلى مساحة عملك… سأرسل ملخّصاً عند الانتهاء.",
+        "en": "📥 Cloning <code>{repo}</code> into your workspace… I'll send an overview when it's ready.",
+        "fr": "📥 Clonage de <code>{repo}</code> dans votre espace… J'enverrai un résumé une fois prêt.",
+        "es": "📥 Clonando <code>{repo}</code> en tu workspace… Te enviaré un resumen cuando esté listo.",
+        "ru": "📥 Клонирую <code>{repo}</code> в ваше рабочее пространство… Пришлю обзор, когда будет готов.",
+        "tr": "📥 <code>{repo}</code> çalışma alanınıza klonlanıyor… Hazır olunca özet göndereceğim.",
     },
 }
 
